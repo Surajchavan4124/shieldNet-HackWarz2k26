@@ -14,15 +14,15 @@ export const moderatePostAction = async (req, res, next) => {
   try {
     const { postId, action } = req.body;
     
-    if (!postId || !action) {
+    if (!postId || typeof postId !== 'string' || postId.trim().length === 0) {
       res.status(400);
-      throw new Error('Post ID and action are required');
+      throw new Error('Valid Post ID is required');
     }
 
     const validActions = ['mark_safe', 'remove_content', 'ignore_flag'];
-    if (!validActions.includes(action)) {
+    if (!action || !validActions.includes(action)) {
       res.status(400);
-      throw new Error('Invalid moderation action');
+      throw new Error(`Invalid moderation action. Allowed actions are: ${validActions.join(', ')}`);
     }
 
     let mappedStatus = 'pending';

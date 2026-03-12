@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import rateLimit from 'express-rate-limit';
 import connectDB from './config/db.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
@@ -21,11 +22,23 @@ import reportRoutes from './routes/reportRoutes.route.js';
 import moderationRoutes from './routes/moderationRoutes.route.js';
 
 // Connect to Database
-if (process.env.MONGO_URI && process.env.MONGO_URI !== 'your_mongodb_atlas_connection_string_here') {
+if (process.env.MONGODB_URI) {
   connectDB();
 } else {
-  console.log('MongoDB connection skipped: Please set valid MONGO_URI in .env');
+  console.log('MongoDB connection skipped: Please set valid MONGODB_URI in .env');
 }
+
+// Rate Limiter
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per `window` (here, per 15 minutes)
+  message: 'Too many requests from this IP, please try again after 15 minutes',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Apply rate limiter to all API routes
+app.use('/api/', apiLimiter);
 
 // Routes
 app.use('/api/analyze', analyzeRoutes);

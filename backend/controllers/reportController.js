@@ -5,9 +5,14 @@ export const reportPost = async (req, res, next) => {
   try {
     const { postId, reason } = req.body;
     
-    if (!postId || !reason) {
+    if (!postId || typeof postId !== 'string' || postId.trim().length === 0) {
       res.status(400);
-      throw new Error('PostId and reason are required');
+      throw new Error('Valid Post ID is required');
+    }
+    
+    if (!reason || typeof reason !== 'string' || reason.trim().length === 0) {
+       res.status(400);
+       throw new Error('Valid report reason is required');
     }
 
     const report = new Report({ postId, reason });
