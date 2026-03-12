@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ShieldNet Extension</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header glass">
+    <div class="logo-area">
+      <div class="shield-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 2L4 5V11.09C4 16.14 7.41 20.85 12 22C16.59 20.85 20 16.14 20 11.09V5L12 2Z" stroke="#06b6d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M12 12V6M12 16H12.01" stroke="#06b6d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <h1>SHIELDNET</h1>
+    </div>
+    <label class="toggle-switch">
+      <input type="checkbox" id="main-toggle" checked>
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <div class="tabs-container">
+    <div class="tabs glass">
+      <button class="tab-btn active" data-tab="overview">OVERVIEW</button>
+      <button class="tab-btn" data-tab="settings">SETTINGS</button>
+    </div>
+  </div>
+
+  <div class="tab-content active" id="overview-tab">
+    <div class="platform-detect active glass">
+      <div class="dot green"></div>
+      <span class="platform-text text-green">Active on Twitter/X</span>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card neutral glass">
+        <div class="stat-value">245</div>
+        <div class="stat-label">SCANNED</div>
+      </div>
+      <div class="stat-card danger glass">
+        <div class="stat-value">12</div>
+        <div class="stat-label">FLAGGED</div>
+      </div>
+      <div class="stat-card warning glass">
+        <div class="stat-value">45%</div>
+        <div class="stat-label">AVG RISK</div>
+      </div>
+    </div>
+
+    <div class="section-title">RECENT DETECTIONS</div>
+    <div class="detections-list">
+      <div class="detection-item glass">
+        <div class="detect-header">
+          <span class="handle">@CryptoGuru99</span>
+          <span class="time">2m ago</span>
+        </div>
+        <div class="snippet">"New token going 1000x tonight guaranteed..."</div>
+        <div class="risk-info">
+          <div class="risk-bar-container">
+            <div class="risk-bar" style="width: 89%; background-color: var(--red);"></div>
+          </div>
+          <div class="risk-score text-red">89%</div>
+        </div>
+      </div>
+      
+      <div class="detection-item glass">
+        <div class="detect-header">
+          <span class="handle">@HealthInsights</span>
+          <span class="time">15m ago</span>
+        </div>
+        <div class="snippet">"Drinking bleach cures viral infections..."</div>
+        <div class="risk-info">
+          <div class="risk-bar-container">
+            <div class="risk-bar" style="width: 96%; background-color: var(--red);"></div>
+          </div>
+          <div class="risk-score text-red">96%</div>
+        </div>
+      </div>
+      
+      <div class="detection-item glass">
+        <div class="detect-header">
+          <span class="handle">@PoliticWatch</span>
+          <span class="time">1h ago</span>
+        </div>
+        <div class="snippet">"Leaked documents show government is..."</div>
+        <div class="risk-info">
+          <div class="risk-bar-container">
+            <div class="risk-bar" style="width: 65%; background-color: var(--amber);"></div>
+          </div>
+          <div class="risk-score text-amber">65%</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="actions-row">
+      <button class="action-btn secondary-btn" id="rescan-btn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+      </button>
+      <button class="action-btn secondary-btn" id="report-btn">REPORT</button>
+      <button class="action-btn primary-btn" id="dashboard-btn">DASHBOARD</button>
+    </div>
+  </div>
+
+  <div class="tab-content" id="settings-tab">
+    <div class="setting-group glass">
+      <div class="setting-header">
+        <span class="setting-title">SENSITIVITY</span>
+        <span class="slider-value">75%</span>
+      </div>
+      <input type="range" min="30" max="100" value="75" class="range-slider">
+      <div class="setting-desc">Lower threshold flags more content.</div>
+    </div>
+
+    <div class="section-title">PLATFORMS</div>
+    <div class="setting-group glass">
+      <div class="setting-row">
+        <span>Twitter / X</span>
+        <label class="toggle-switch small"><input type="checkbox" checked><span class="slider"></span></label>
+      </div>
+      <div class="setting-row">
+        <span>Facebook</span>
+        <label class="toggle-switch small"><input type="checkbox" checked><span class="slider"></span></label>
+      </div>
+      <div class="setting-row">
+        <span>Reddit</span>
+        <label class="toggle-switch small"><input type="checkbox" checked><span class="slider"></span></label>
+      </div>
+      <div class="setting-row">
+        <span>Instagram</span>
+        <label class="toggle-switch small"><input type="checkbox" checked><span class="slider"></span></label>
+      </div>
+    </div>
+
+    <div class="section-title">OPTIONS</div>
+    <div class="setting-group glass">
+      <div class="setting-row">
+        <span>Auto-Blur Flagged</span>
+        <label class="toggle-switch small"><input type="checkbox" checked><span class="slider"></span></label>
+      </div>
+      <div class="setting-row">
+        <span>Show "SAFE" Badges</span>
+        <label class="toggle-switch small"><input type="checkbox" checked><span class="slider"></span></label>
+      </div>
+      <div class="setting-row">
+        <span>Desktop Notifications</span>
+        <label class="toggle-switch small"><input type="checkbox"><span class="slider"></span></label>
+      </div>
+      <div class="setting-row">
+        <span>Usage Data Sharing</span>
+        <label class="toggle-switch small"><input type="checkbox" checked><span class="slider"></span></label>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
