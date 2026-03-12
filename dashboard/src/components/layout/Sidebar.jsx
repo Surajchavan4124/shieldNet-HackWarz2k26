@@ -1,12 +1,13 @@
 import { LayoutDashboard, Flag, Inbox, BarChart2, Settings } from 'lucide-react';
+import clsx from 'clsx';
 
-export default function Sidebar() {
+export default function Sidebar({ currentView, setCurrentView }) {
     const navItems = [
-        { name: 'Dashboard', icon: LayoutDashboard, active: true },
-        { name: 'Flagged Posts', icon: Flag, active: false },
-        { name: 'Moderation Queue', icon: Inbox, active: false },
-        { name: 'Analytics', icon: BarChart2, active: false },
-        { name: 'Settings', icon: Settings, active: false },
+        { id: 'dashboard', name: 'Dashboard', icon: LayoutDashboard },
+        { id: 'flagged', name: 'Flagged Posts', icon: Flag },
+        { id: 'queue', name: 'Moderation Queue', icon: Inbox },
+        { id: 'analytics', name: 'Analytics', icon: BarChart2 },
+        { id: 'settings', name: 'Settings', icon: Settings },
     ];
 
     return (
@@ -14,18 +15,19 @@ export default function Sidebar() {
             <nav className="flex-1 py-6 px-4 space-y-2 overflow-y-auto">
                 {navItems.map((item) => {
                     const Icon = item.icon;
+                    const isActive = currentView === item.id;
                     return (
-                        <a
-                            key={item.name}
-                            href="#"
-                            className={`flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-colors ${item.active
+                        <button
+                            key={item.id}
+                            onClick={() => setCurrentView(item.id)}
+                            className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-colors ${isActive
                                     ? "bg-blue-600 text-white"
                                     : "text-slate-400 hover:bg-slate-800 hover:text-white"
                                 }`}
                         >
                             <Icon className="w-5 h-5 flex-shrink-0" />
                             <span>{item.name}</span>
-                        </a>
+                        </button>
                     );
                 })}
             </nav>
