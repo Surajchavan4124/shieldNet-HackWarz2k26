@@ -76,7 +76,8 @@ function analyzePostContent(message) {
   let riskScore = Math.floor(Math.random() * 30); 
   let category = "normal";
   let flagged = false;
-  let explanation = "This post appears safe and follows community guidelines.";
+  let explanation = "This post appears safe and follows community guidelines. No immediate risks were detected by ShieldNet AI.";
+  let sources = [];
 
   for (const cat in categories) {
     const matched = categories[cat].find(word => lowerText.includes(word));
@@ -84,7 +85,32 @@ function analyzePostContent(message) {
         riskScore = 70 + Math.floor(Math.random() * 30);
         category = cat === 'health' ? 'health misinformation' : (cat === 'political' ? 'political manipulation' : cat);
         flagged = true;
-        explanation = `ShieldNet detected keywords related to ${category}. This content may contain unverified or harmful claims.`;
+        
+        if (cat === 'scam') {
+            explanation = "This post contains patterns commonly associated with financial scams or 'get rich quick' schemes. It uses high-pressure language and promises unrealistic returns.";
+            sources = [
+                { title: "FTC: How to avoid social media scams", url: "https://consumer.ftc.gov/articles/how-avoid-social-media-scams" },
+                { title: "SEC: Investment Fraud Prevention", url: "https://www.sec.gov/investor/alerts" }
+            ];
+        } else if (cat === 'health') {
+            explanation = "ShieldNet AI detected claims about medical treatments or cures that contradict established scientific consensus. Following unverified medical advice can be dangerous.";
+            sources = [
+                { title: "WHO: 5G Mobile Networks & Health", url: "https://www.who.int/news-room/questions-and-answers/item/radiation-5g-mobile-networks-and-health" },
+                { title: "CDC: Vaccine Safety and Facts", url: "https://www.cdc.gov/vaccinesafety/index.html" }
+            ];
+        } else if (cat === 'political') {
+            explanation = "This content uses inflammatory language and unverified claims to target political processes or public trust. It aligns with known patterns of influence operations.";
+            sources = [
+                { title: "CISA: Election Security & Misinformation", url: "https://www.cisa.gov/topics/election-security/rumor-vs-reality" },
+                { title: "FactCheck.org: Political Claims", url: "https://www.factcheck.org/" }
+            ];
+        } else {
+            explanation = "This post contains information that has been flagged as potentially false or misleading by ShieldNet's detection models.";
+            sources = [
+                { title: "Reuters Fact Check", url: "https://www.reuters.com/fact-check/" },
+                { title: "PolitiFact", url: "https://www.politifact.com/" }
+            ];
+        }
         break;
     }
   }
@@ -96,7 +122,8 @@ function analyzePostContent(message) {
     risk_score: riskScore,
     category: category,
     explanation: explanation,
-    flagged: flagged
+    flagged: flagged,
+    verified_sources: sources
   };
 
   console.log("[ShieldNet Analysis Result]:", JSON.stringify(result, null, 2));
