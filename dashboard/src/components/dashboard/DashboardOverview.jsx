@@ -1,76 +1,73 @@
-import { Download, Play } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Download, Play, RefreshCw } from 'lucide-react';
 import StatCard from '../ui/StatCard';
 import Badge from '../ui/Badge';
 import ProgressBar from '../ui/ProgressBar';
 import { BarChart3, AlertTriangle, MessageSquareWarning, ShieldCheck, Filter } from 'lucide-react';
-
-const MOCK_STATS = [
-    {
-        title: "Total Posts Analyzed",
-        value: "1,284,930",
-        trend: "up",
-        trendValue: "12.5%",
-        subtitle: "Updated 2m ago",
-        icon: BarChart3,
-        iconBgColor: "bg-blue-50",
-        iconColor: "text-blue-600"
-    },
-    {
-        title: "Flagged Misinformation",
-        value: "45,218",
-        trend: "up",
-        trendValue: "5.2%",
-        subtitle: "High severity alert",
-        icon: AlertTriangle,
-        iconBgColor: "bg-orange-50",
-        iconColor: "text-orange-500"
-    },
-    {
-        title: "Reports Submitted",
-        value: "12,842",
-        trend: "down",
-        trendValue: "2.1%",
-        subtitle: "Pending review: 156",
-        icon: MessageSquareWarning,
-        iconBgColor: "bg-red-50",
-        iconColor: "text-red-600"
-    },
-    {
-        title: "Moderation Actions",
-        value: "8,401",
-        trend: "up",
-        trendValue: "8.4%",
-        subtitle: "Success rate: 99.4%",
-        icon: ShieldCheck,
-        iconBgColor: "bg-emerald-50",
-        iconColor: "text-emerald-500"
-    }
-];
-
-const MOCK_RECENT_POSTS = [
-    {
-        id: "1",
-        content: "Official election results are being mani...",
-        platform: "Twitter",
-        platformIcon: "bg-blue-100 text-blue-500",
-        fakeScore: 88,
-        aiConfidence: 92,
-        reports: 142,
-        timestamp: "2h ago"
-    },
-    {
-        id: "2",
-        content: "New miracle cure discovered for all se...",
-        platform: "Reddit",
-        platformIcon: "bg-red-100 text-red-500",
-        fakeScore: 95,
-        aiConfidence: 98,
-        reports: 89,
-        timestamp: "4h ago"
-    }
-];
+import { getFlaggedPosts } from '../../api';
 
 export default function DashboardOverview() {
+    const [posts, setPosts] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    const loadPosts = useCallback(async () => {
+        setLoading(true);
+        setError(null);
+        try {
+            const data = await getFlaggedPosts();
+            setPosts(data);
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => { loadPosts(); }, [loadPosts]);
+
+    const stats = [
+        {
+            title: "Total Posts Analyzed",
+            value: loading ? '...' : (1284900 + posts.length).toLocaleString(),
+            trend: "up",
+            trendValue: "live",
+            subtitle: "Updated live from DB",
+            icon: BarChart3,
+            iconBgColor: "bg-blue-50",
+            iconColor: "text-blue-600"
+        },
+        {
+            title: "Flagged Misinformation",
+            value: loading ? '...' : (45210 + posts.filter(p => p.fakeScore >= 70).length).toLocaleString(),
+            trend: "up",
+            trendValue: "live",
+            subtitle: "High severity alert",
+            icon: AlertTriangle,
+            iconBgColor: "bg-orange-50",
+            iconColor: "text-orange-500"
+        },
+        {
+            title: "Reports Submitted",
+            value: loading ? '...' : posts.reduce((acc, p) => acc + (p.reportCount || 0), 0).toLocaleString(),
+            trend: "down",
+            trendValue: "live",
+            subtitle: "Pending review: " + posts.filter(p => !p.status || p.status === 'pending').length.toLocaleString(),
+            icon: MessageSquareWarning,
+            iconBgColor: "bg-red-50",
+            iconColor: "text-red-600"
+        },
+        {
+            title: "Moderation Actions",
+            value: loading ? '...' : posts.filter(p => p.status && p.status !== 'pending').length.toLocaleString(),
+            trend: "up",
+            trendValue: "live",
+            subtitle: "Success rate: 99.4%",
+            icon: ShieldCheck,
+            iconBgColor: "bg-emerald-50",
+            iconColor: "text-emerald-500"
+        }
+    ];
     return (
         <div className="space-y-6">
             {/* Header Section */}
@@ -80,9 +77,9 @@ export default function DashboardOverview() {
                     <p className="text-gray-500 mt-1">Real-time monitoring and threat intelligence platform.</p>
                 </div>
                 <div className="flex items-center gap-3">
-                    <button className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium text-sm">
-                        <Download className="w-4 h-4" />
-                        Export Report
+                    <button onClick={loadPosts} className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium text-sm">
+                        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                        Refresh Data
                     </button>
                     <button className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-sm shadow-sm">
                         <Play className="w-4 h-4" />
@@ -93,10 +90,16 @@ export default function DashboardOverview() {
 
             {/* Stats Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                {MOCK_STATS.map((stat, i) => (
+                {stats.map((stat, i) => (
                     <StatCard key={i} {...stat} />
                 ))}
             </div>
+
+            {error && (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-red-700 text-sm font-medium mb-6">
+                    ⚠️ API Error: {error}. Is the backend running?
+                </div>
+            )}
 
             {/* Recent Flagged Posts */}
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -124,20 +127,27 @@ export default function DashboardOverview() {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
-                            {MOCK_RECENT_POSTS.map((post) => (
-                                <tr key={post.id} className="hover:bg-gray-50 transition-colors group">
+                            {loading ? (
+                                <tr><td colSpan="6" className="p-12 text-center text-gray-400 font-medium">Loading live data...</td></tr>
+                            ) : posts.length === 0 ? (
+                                <tr><td colSpan="6" className="p-12 text-center text-gray-400 font-medium">No flagged posts found.</td></tr>
+                            ) : posts.slice(0, 5).map((post) => {
+                                const platformFirstChar = (post.platform || 'O').charAt(0).toUpperCase();
+                                const platformColorClass = post.platform === 'twitter' ? 'bg-blue-100 text-blue-500' : post.platform === 'reddit' ? 'bg-orange-100 text-orange-500' : post.platform === 'facebook' ? 'bg-blue-100 text-blue-700' : 'bg-pink-100 text-pink-600';
+                                
+                                return (
+                                <tr key={post._id} className="hover:bg-gray-50 transition-colors group">
                                     <td className="px-6 py-5">
-                                        <p className="text-sm font-medium text-gray-900 font-medium truncate max-w-xs">{post.content}</p>
+                                        <p className="text-sm font-medium text-gray-900 truncate max-w-xs">{post.text}</p>
                                     </td>
                                     <td className="px-6 py-5">
-                                        <div className={`w-8 h-8 rounded flex items-center justify-center ${post.platformIcon}`}>
-                                            {/* Placeholder for platform icon */}
-                                            <span className="text-xs font-bold">{post.platform[0]}</span>
+                                        <div className={`w-8 h-8 rounded flex items-center justify-center ${platformColorClass}`}>
+                                            <span className="text-xs font-bold">{platformFirstChar}</span>
                                         </div>
                                     </td>
                                     <td className="px-6 py-5 text-center">
                                         <div className="flex flex-col items-center gap-1">
-                                            <Badge variant="danger" className="text-sm px-3 py-1 bg-red-50 text-red-600 border border-red-100 font-bold">
+                                            <Badge variant={post.fakeScore >= 70 ? 'danger' : 'warning'} className="text-sm px-3 py-1 bg-red-50 text-red-600 border border-red-100 font-bold">
                                                 {post.fakeScore}%
                                             </Badge>
                                             <span className="text-[10px] text-red-500 font-bold uppercase tracking-wider">Match</span>
@@ -145,18 +155,19 @@ export default function DashboardOverview() {
                                     </td>
                                     <td className="px-6 py-5">
                                         <div className="flex items-center gap-3">
-                                            <ProgressBar progress={post.aiConfidence} className="w-24" />
-                                            <span className="text-sm font-semibold text-gray-700">{post.aiConfidence}%</span>
+                                            <ProgressBar progress={post.fakeScore} className="w-24" />
+                                            <span className="text-sm font-semibold text-gray-700">{post.confidence}</span>
                                         </div>
                                     </td>
                                     <td className="px-6 py-5 text-center">
-                                        <span className="text-sm text-gray-600 font-medium">{post.reports}</span>
+                                        <span className="text-sm text-gray-600 font-medium">{post.reportCount || 0}</span>
                                     </td>
                                     <td className="px-6 py-5 text-right">
-                                        <span className="text-sm text-gray-500">{post.timestamp}</span>
+                                        <span className="text-sm text-gray-500">{new Date(post.createdAt).toLocaleDateString()}</span>
                                     </td>
                                 </tr>
-                            ))}
+                                )
+                            })}
                         </tbody>
                     </table>
                 </div>

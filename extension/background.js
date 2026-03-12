@@ -56,52 +56,46 @@ function updateStorage(responseData) {
 }
 
 /**
- * Platform-Aware Analysis Logic
- * Returns JSON object with: platform, author, post_text, risk_score, category, explanation, flagged
+ * Real-time Analysis Integration
+ * Connects to the Node.js backend instead of using mock logic.
  */
-function analyzePostContent(message) {
+async function analyzePostContent(message) {
   const { text, author, platform } = message;
-  const lowerText = text.toLowerCase();
   
-  console.log(`[ShieldNet Monitor] Analyzing ${platform} post from ${author}`);
+  console.log(`[ShieldNet Monitor] Sending ${platform} post from ${author} to backend...`);
 
-  // Refined trigger logic based on user request
-  const categories = {
-    scam: ["scam", "crypto", "token", "1000x", "guaranteed returns", "giveaway"],
-    health: ["miracle cure", "drinking bleach", "cure cancer", "vaccine", "covid"],
-    political: ["government mind control", "5g causes", "rigged", "election"],
-    misinformation: ["fake news", "earth is flat", "conspiracy"]
-  };
-  
-  let riskScore = Math.floor(Math.random() * 30); 
-  let category = "normal";
-  let flagged = false;
-  let explanation = "This post appears safe and follows community guidelines.";
+  try {
+    const response = await fetch('http://localhost:5000/api/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, platform: platform.toLowerCase() })
+    });
 
-  for (const cat in categories) {
-    const matched = categories[cat].find(word => lowerText.includes(word));
-    if (matched) {
-        riskScore = 70 + Math.floor(Math.random() * 30);
-        category = cat === 'health' ? 'health misinformation' : (cat === 'political' ? 'political manipulation' : cat);
-        flagged = true;
-        explanation = `ShieldNet detected keywords related to ${category}. This content may contain unverified or harmful claims.`;
-        break;
-    }
+    if (!response.ok) throw new Error('Backend analysis failed');
+
+    const data = await response.json();
+    
+    const result = {
+      platform: platform,
+      author: author,
+      post_text: text,
+      risk_score: data.fakeScore,
+      category: data.fakeScore >= 70 ? 'misinformation' : 'normal',
+      explanation: data.explanation,
+      flagged: data.fakeScore >= 70
+    };
+
+    console.log("[ShieldNet Analysis Result]:", JSON.stringify(result, null, 2));
+    return result;
+  } catch (error) {
+    console.error("[ShieldNet Error]:", error);
+    return {
+      platform, author, post_text: text,
+      risk_score: 0, category: 'error',
+      explanation: "Unable to connect to ShieldNet AI. Please check if the backend is running.",
+      flagged: false
+    };
   }
-
-  const result = {
-    platform: platform,
-    author: author,
-    post_text: text,
-    risk_score: riskScore,
-    category: category,
-    explanation: explanation,
-    flagged: flagged
-  };
-
-  console.log("[ShieldNet Analysis Result]:", JSON.stringify(result, null, 2));
-
-  return result;
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -115,24 +109,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
     }
     
-    chrome.storage.local.get(['shieldNetActive'], (result) => {
+    chrome.storage.local.get(['shieldNetActive'], async (result) => {
       if (result.shieldNetActive === false) {
         console.log("[ShieldNet] Extension disabled, skipping analysis");
         sendResponse({ success: false, reason: "disabled" });
         return;
       }
       
-      const responseData = analyzePostContent(message);
+      const responseData = await analyzePostContent(message);
       
       // Use the atomic storage queue
       updateStorage(responseData);
 
       analysisCache.set(textHash, responseData);
-      
-      // Simulate slight delay for technical feel
-      setTimeout(() => {
-        sendResponse(responseData);
-      }, 300);
+      sendResponse(responseData);
     });
 
     return true; 

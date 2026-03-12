@@ -40,6 +40,10 @@ const flaggedPostSchema = new mongoose.Schema(
       enum: ['pending', 'safe', 'removed'],
       default: 'pending',
     },
+    metadata: {
+      type: Object,
+      default: {},
+    },
   },
   {
     timestamps: true,
