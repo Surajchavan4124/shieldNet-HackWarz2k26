@@ -3,7 +3,8 @@ import Layout from './components/layout/Layout';
 import DashboardOverview from './components/dashboard/DashboardOverview';
 import ModerationQueue from './components/queue/ModerationQueue';
 import PostAnalysis from './components/analysis/PostAnalysis';
-import AnalyticsDashboard from './components/analytics/AnalyticsDashboard';
+import Analytics from './components/analytics/Analytics';
+import FlaggedPosts from './components/posts/FlaggedPosts';
 
 export default function App() {
   const [currentView, setCurrentView] = useState('dashboard');
@@ -13,12 +14,11 @@ export default function App() {
       case 'dashboard':
         return <DashboardOverview />;
       case 'flagged':
-        // Simulating clicking a flagged post to see its analysis
-        return <PostAnalysis />;
+        return <FlaggedPosts />;
       case 'queue':
         return <ModerationQueue />;
       case 'analytics':
-        return <AnalyticsDashboard />;
+        return <Analytics />;
       case 'settings':
         return <div className="p-8 text-center text-gray-500 text-xl font-medium">Settings View Coming Soon</div>;
       default:
