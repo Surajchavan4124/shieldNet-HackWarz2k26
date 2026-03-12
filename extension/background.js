@@ -5,15 +5,14 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.set({
     shieldNetActive: true,
     flaggedCount: 0,
-    scannedCount: 0
+    scannedCount: 0,
+    recentDetections: []
   });
   console.log("ShieldNet installed and active.");
 });
 
-// A local cache to prevent redundant API calls for text we've already checked
 const analysisCache = new Map();
 
-// Generate a simple hash of a string for caching purposes
 function simpleHash(str) {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
@@ -23,108 +22,130 @@ function simpleHash(str) {
   return hash.toString();
 }
 
-// Function to increment scan count in storage
-function incrementScanCount() {
-  chrome.storage.local.get(['scannedCount'], (result) => {
-    let count = result.scannedCount || 0;
-    chrome.storage.local.set({ scannedCount: count + 1 });
+function incrementCounters(isFlagged) {
+  chrome.storage.local.get(['scannedCount', 'flaggedCount'], (result) => {
+    let scanned = (result.scannedCount || 0) + 1;
+    let flagged = result.flaggedCount || 0;
+    if (isFlagged) flagged++;
+    chrome.storage.local.set({ scannedCount: scanned, flaggedCount: flagged });
   });
 }
 
-// Function to increment flagged count in storage
-function incrementFlaggedCount() {
-  chrome.storage.local.get(['flaggedCount'], (result) => {
-    let count = result.flaggedCount || 0;
-    chrome.storage.local.set({ flaggedCount: count + 1 });
+/**
+ * Stores a detection in a limited list of 'recentDetections'
+ */
+function storeDetection(detection) {
+  chrome.storage.local.get(['recentDetections'], (result) => {
+    let detections = result.recentDetections || [];
+    
+    // Prevent duplicates in the recent list (based on text hash)
+    const textHash = simpleHash(detection.post_text + detection.author);
+    if (detections.some(d => simpleHash(d.post_text + d.author) === textHash)) {
+        return;
+    }
+
+    detections.unshift({
+        ...detection,
+        id: Date.now(),
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    });
+
+    if (detections.length > 20) detections.pop();
+    
+    chrome.storage.local.set({ recentDetections: detections }, () => {
+        console.log(`[ShieldNet] Storage updated with detection from ${detection.author}`);
+    });
   });
 }
 
-// Mock analysis logic for misinformation detection (Pending API integration)
-function mockAnalysisLogic(text) {
+/**
+ * Platform-Aware Analysis Logic
+ * Returns JSON object with: platform, author, post_text, risk_score, category, explanation, flagged
+ */
+function analyzePostContent(message) {
+  const { text, author, platform } = message;
   const lowerText = text.toLowerCase();
   
-  // Specific keywords that trigger our mock AI
-  const triggerWords = ["fake news", "miracle cure", "government mind control", "5g causes", "earth is flat"];
+  console.log(`[ShieldNet Monitor] Analyzing ${platform} post from ${author}`);
+
+  // Refined trigger logic based on user request
+  const categories = {
+    scam: ["scam", "crypto", "token", "1000x", "guaranteed returns", "giveaway"],
+    health: ["miracle cure", "drinking bleach", "cure cancer", "vaccine", "covid"],
+    political: ["government mind control", "5g causes", "rigged", "election"],
+    misinformation: ["fake news", "earth is flat", "conspiracy"]
+  };
   
-  let isFlagged = false;
-  let probability = Math.floor(Math.random() * 30); // Base probability 0-30%
-  
-  for (const word of triggerWords) {
-    if (lowerText.includes(word)) {
-      isFlagged = true;
-      probability = 75 + Math.floor(Math.random() * 20); // 75-94% probability if matched
-      break;
+  let riskScore = Math.floor(Math.random() * 30); 
+  let category = "normal";
+  let flagged = false;
+  let explanation = "This post appears safe and follows community guidelines.";
+
+  for (const cat in categories) {
+    const matched = categories[cat].find(word => lowerText.includes(word));
+    if (matched) {
+        riskScore = 70 + Math.floor(Math.random() * 30);
+        category = cat === 'health' ? 'health misinformation' : (cat === 'political' ? 'political manipulation' : cat);
+        flagged = true;
+        explanation = `ShieldNet detected keywords related to ${category}. This content may contain unverified or harmful claims.`;
+        break;
     }
   }
 
-  if (isFlagged) {
-    return {
-      success: true,
-      isFlagged: true,
-      probability: probability,
-      explanation: "There is no scientific evidence supporting this claim. Verified medical and scientific guidelines indicate that the information is misleading.",
-      sources: [
-        { title: "World Health Organization Data", url: "https://who.int" },
-        { title: "Reuters Fact Check", url: "https://reuters.com" }
-      ]
-    };
-  } else {
-    return {
-      success: true,
-      isFlagged: false,
-      probability: probability
-    };
-  }
+  const result = {
+    platform: platform,
+    author: author,
+    post_text: text,
+    risk_score: riskScore,
+    category: category,
+    explanation: explanation,
+    flagged: flagged
+  };
+
+  console.log("[ShieldNet Analysis Result]:", JSON.stringify(result, null, 2));
+
+  return result;
 }
 
-// Listen for messages from content scripts
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "analyze_post") {
-    // Generate an ID for the prompt logic
-    const textHash = simpleHash(message.text);
+    console.log(`[ShieldNet] Received analyze_post from ${sender.tab?.url}`);
+    const textHash = simpleHash(message.text + message.author);
     
-    // Check if we have cached results for this exact text to save bandwidth
     if (analysisCache.has(textHash)) {
+      console.log(`[ShieldNet] Using cached result for post from ${message.author}`);
       sendResponse(analysisCache.get(textHash));
-      return true; // Needed for async response
+      return true;
     }
     
-    // Handle processing
     chrome.storage.local.get(['shieldNetActive'], (result) => {
-      // If extension is disabled, skip analysis
       if (result.shieldNetActive === false) {
+        console.log("[ShieldNet] Extension disabled, skipping analysis");
         sendResponse({ success: false, reason: "disabled" });
         return;
       }
       
-      // We are scanning a post
-      incrementScanCount();
+      const responseData = analyzePostContent(message);
+      
+      incrementCounters(responseData.flagged);
+      storeDetection(responseData);
 
-      // MOCK API CALL TO OUR FUTURE Node.js Server
-      // Mocking 1.5 second delay to simulate real network latency
+      analysisCache.set(textHash, responseData);
+      
+      // Simulate slight delay
       setTimeout(() => {
-        const responseData = mockAnalysisLogic(message.text);
-        
-        if (responseData.isFlagged) {
-          incrementFlaggedCount();
-        }
-
-        analysisCache.set(textHash, responseData);
         sendResponse(responseData);
-      }, 1500);
+      }, 300);
     });
 
-    return true; // Keep the message channel open for async response
+    return true; 
   }
   
   if (message.action === "report_post") {
-    console.log("Reporting post to backend API:", message.postData);
-    
-    // Mock successful report logic
+    console.log("Reporting post to ShieldNet API:", message.postData);
     setTimeout(() => {
       sendResponse({ success: true, message: "Post reported successfully." });
-    }, 500);
-    
+    }, 300);
     return true;
   }
 });
