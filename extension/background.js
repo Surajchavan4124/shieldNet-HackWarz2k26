@@ -12,6 +12,7 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 const analysisCache = new Map();
+let storageQueue = Promise.resolve();
 
 function simpleHash(str) {
   let hash = 0;
@@ -22,40 +23,36 @@ function simpleHash(str) {
   return hash.toString();
 }
 
-function incrementCounters(isFlagged) {
-  chrome.storage.local.get(['scannedCount', 'flaggedCount'], (result) => {
-    let scanned = (result.scannedCount || 0) + 1;
-    let flagged = result.flaggedCount || 0;
-    if (isFlagged) flagged++;
-    chrome.storage.local.set({ scannedCount: scanned, flaggedCount: flagged });
-  });
-}
+function updateStorage(responseData) {
+  storageQueue = storageQueue.then(() => new Promise((resolve) => {
+    chrome.storage.local.get(['scannedCount', 'flaggedCount', 'recentDetections'], (result) => {
+      const scanned = (result.scannedCount || 0) + 1;
+      let flagged = result.flaggedCount || 0;
+      if (responseData.flagged) flagged++;
 
-/**
- * Stores a detection in a limited list of 'recentDetections'
- */
-function storeDetection(detection) {
-  chrome.storage.local.get(['recentDetections'], (result) => {
-    let detections = result.recentDetections || [];
-    
-    // Prevent duplicates in the recent list (based on text hash)
-    const textHash = simpleHash(detection.post_text + detection.author);
-    if (detections.some(d => simpleHash(d.post_text + d.author) === textHash)) {
-        return;
-    }
+      let detections = result.recentDetections || [];
+      const textHash = simpleHash(responseData.post_text + responseData.author);
+      
+      // Duplicate check
+      if (!detections.some(d => simpleHash(d.post_text + d.author) === textHash)) {
+          detections.unshift({
+            ...responseData,
+            id: Date.now(),
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          });
+          if (detections.length > 20) detections.pop();
+      }
 
-    detections.unshift({
-        ...detection,
-        id: Date.now(),
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      chrome.storage.local.set({ 
+        scannedCount: scanned, 
+        flaggedCount: flagged,
+        recentDetections: detections 
+      }, () => {
+        console.log(`[ShieldNet] Storage updated. Total Scanned: ${scanned}, Flagged: ${flagged}`);
+        resolve();
+      });
     });
-
-    if (detections.length > 20) detections.pop();
-    
-    chrome.storage.local.set({ recentDetections: detections }, () => {
-        console.log(`[ShieldNet] Storage updated with detection from ${detection.author}`);
-    });
-  });
+  }));
 }
 
 /**
@@ -127,12 +124,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       
       const responseData = analyzePostContent(message);
       
-      incrementCounters(responseData.flagged);
-      storeDetection(responseData);
+      // Use the atomic storage queue
+      updateStorage(responseData);
 
       analysisCache.set(textHash, responseData);
       
-      // Simulate slight delay
+      // Simulate slight delay for technical feel
       setTimeout(() => {
         sendResponse(responseData);
       }, 300);
