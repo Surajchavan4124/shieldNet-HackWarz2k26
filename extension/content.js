@@ -74,7 +74,7 @@ const SITE_CONFIGS = {
   },
   'reddit.com': {
     platform: 'reddit',
-    postSelector: 'shreddit-post, faceplate-tracker, .Post, [id^="t3_"]',
+    postSelector: 'shreddit-post, .Post, [id^="t3_"]',
     getAuthor: (post) => {
       const subreddit = post.getAttribute('subreddit-prefixed-name');
       if (subreddit) return subreddit;
@@ -117,6 +117,8 @@ function scanPosts() {
     if (posts.length > 0) log(`Heartbeat scan: Found ${posts.length} potential posts`);
     posts.forEach(post => {
       if (post.dataset.snScanned === "true" || post.dataset.snScanned === "loading") return;
+      // Skip if this element is already inside an overlay container (avoid double-overlay)
+      if (post.closest('.sn-post-container')) return;
       if (post.tagName.toLowerCase() === 'shreddit-post') {
         if (!post.getAttribute('author') && !post.getAttribute('post-title')) return;
       }
