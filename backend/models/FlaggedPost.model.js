@@ -2,20 +2,24 @@ import mongoose from 'mongoose';
 
 const flaggedPostSchema = new mongoose.Schema(
   {
-    post_text: {
+    text: {
       type: String,
       required: true,
     },
-    platform_source: {
+    platform: {
       type: String,
       required: true,
-      enum: ['Instagram', 'Facebook', 'Reddit', 'Twitter', 'Other'],
     },
-    fake_probability: {
+    fakeScore: {
       type: Number,
       required: true,
       min: 0,
       max: 100,
+    },
+    confidence: {
+      type: String,
+      required: true,
+      enum: ['High', 'Medium', 'Low'],
     },
     explanation: {
       type: String,
@@ -27,9 +31,13 @@ const flaggedPostSchema = new mongoose.Schema(
         url: String,
       },
     ],
+    reportCount: {
+      type: Number,
+      default: 0,
+    },
     status: {
       type: String,
-      enum: ['pending', 'reviewed', 'removed'],
+      enum: ['pending', 'safe', 'removed'],
       default: 'pending',
     },
   },

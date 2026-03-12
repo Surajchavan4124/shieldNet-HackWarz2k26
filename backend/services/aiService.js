@@ -1,39 +1,45 @@
-/**
- * Mock AI Service for ShieldNet
- * In production, this will connect to OpenAI, Google Gemini, Hugging Face, etc.
- */
+import { GoogleGenAI } from '@google/genai';
 
-export const analyzeContent = async (text, platform) => {
-  // Simulate API delay
-  await new Promise((resolve) => setTimeout(resolve, 1500));
-
-  console.log(`Analyzing content from ${platform}: "${text.substring(0, 50)}..."`);
-
-  // Simple mock logic based on keywords
-  const lowerText = text.toLowerCase();
-  
-  let fake_probability = 15; // default low probability
-  let explanation = "This post appears to be sharing standard user content without significant verifiable claims.";
-  let sources = [];
-  
-  if (lowerText.includes('flat earth') || lowerText.includes('chip') || lowerText.includes('fake')) {
-    fake_probability = 85;
-    explanation = "This post contains known conspiracy theories or unsubstantiated claims. Multiple fact-checking organizations have debunked these statements.";
-    sources = [
-      { title: "Fact Check: The Earth is not flat", url: "https://example.com/fact-check-1" },
-      { title: "Scientific Consensus on vaccines", url: "https://example.com/science" }
-    ];
-  } else if (lowerText.includes('cure') || lowerText.includes('miracle')) {
-    fake_probability = 65;
-    explanation = "This post makes strong health or medical claims that may require verification. Always consult healthcare professionals.";
-    sources = [
-      { title: "Medical Guidelines", url: "https://example.com/medical-guidelines" }
-    ];
+export const detectMisinformation = async (text) => {
+  if (!process.env.GEMINI_API_KEY) {
+    throw new Error('GEMINI_API_KEY environment variable is not set');
   }
 
-  return {
-    fake_probability,
-    explanation,
-    sources
-  };
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+  const prompt = `Analyze the following social media post for misinformation or misleading claims.
+Post: "${text}"
+
+Respond ONLY with a valid JSON object in this exact format:
+{
+  "fakeScore": <number between 0 and 100>,
+  "confidence": "<High, Medium, or Low>",
+  "explanation": "<short paragraph explaining why>"
+}`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+    });
+
+    let jsonString = response.text;
+    
+    // Clean up potential markdown formatting from the response
+    jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
+    
+    const result = JSON.parse(jsonString);
+    
+    // Safety check constraints
+    if (result.fakeScore < 0) result.fakeScore = 0;
+    if (result.fakeScore > 100) result.fakeScore = 100;
+    if (!['High', 'Medium', 'Low'].includes(result.confidence)) {
+      result.confidence = 'Medium';
+    }
+
+    return result;
+  } catch (error) {
+    console.error('Gemini API Error:', error);
+    throw new Error('Failed to analyze content with AI. ' + error.message);
+  }
 };

@@ -2,23 +2,18 @@ import mongoose from 'mongoose';
 
 const moderationLogSchema = new mongoose.Schema(
   {
-    post_id: {
+    postId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'FlaggedPost',
       required: true,
     },
-    action_type: {
-      type: String,
-      required: true,
-      enum: ['review', 'remove', 'ignore'],
-    },
-    moderator_decision: {
+    action: {
       type: String,
       required: true,
     },
-    timestamp: {
-      type: Date,
-      default: Date.now,
+    moderatorId: {
+      type: String,
+      default: 'system', // or an actual ObjectId if you add User models later
     },
   },
   {

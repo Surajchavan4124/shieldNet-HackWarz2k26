@@ -4,6 +4,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import connectDB from './config/db.js';
+import { errorHandler } from './middleware/errorHandler.js';
 
 dotenv.config();
 
@@ -33,8 +34,11 @@ app.use('/api/moderation', moderationRoutes);
 
 // Basic Route
 app.get('/', (req, res) => {
-  res.send('ShieldNet API is running...');
+  res.send('ShieldNet API is running with new architecture...');
 });
+
+// Error Middleware
+app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
 

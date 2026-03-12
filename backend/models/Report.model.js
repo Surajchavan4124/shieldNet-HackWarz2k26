@@ -2,18 +2,14 @@ import mongoose from 'mongoose';
 
 const reportSchema = new mongoose.Schema(
   {
-    post_id: {
+    postId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'FlaggedPost',
       required: true,
     },
-    report_reason: {
+    reason: {
       type: String,
       required: true,
-    },
-    report_count: {
-      type: Number,
-      default: 1,
     },
   },
   {
