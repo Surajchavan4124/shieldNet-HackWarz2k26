@@ -160,12 +160,23 @@ let   batchTimer      = null;
 let   totalCallsMade  = 0;
 const MAX_CALLS       = 200;
 
+// ── Visual Indicator for User ───────────────────────────────────────────────
+function injectStatusIndicator() {
+  if (document.getElementById('sn-status-indicator')) return;
+  const div = document.createElement('div');
+  div.id = 'sn-status-indicator';
+  div.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:2147483647;background:#4f46e5;color:white;padding:8px 16px;border-radius:30px;font-size:12px;font-weight:700;box-shadow:0 4px 12px rgba(0,0,0,0.3);display:flex;align-items:center;gap:8px;pointer-events:none;transition:all 0.3s;';
+  div.innerHTML = '<span style="width:8px;height:8px;background:#10b981;border-radius:50%;box-shadow:0 0 8px #10b981;"></span> ShieldNet Live';
+  document.body.appendChild(div);
+}
+
 function queuePost(post, text, author) {
   if (totalCallsMade >= MAX_CALLS) return;
+  injectStatusIndicator();
 
-  // ── INSTANT local check — threshold 30: blur immediately on any strong match ──
+  // ── INSTANT local check — threshold 20: super aggressive for immediate feedback ──
   const { score: ls, reason: lsReason } = localScore(text);
-  if (ls >= 30 && !post.classList.contains('sn-protected')) {
+  if (ls >= 20 && !post.classList.contains('sn-protected')) {
     const localResult = {
       text, author,
       fakeScore:   ls,
@@ -264,8 +275,8 @@ async function flushBatch() {
 // ─── Apply Result to Post ─────────────────────────────────────────────────────
 function applyResult(post, result) {
   const score = result?.fakeScore ?? result?.risk_score ?? 0;
-  // Lower threshold to 30 so borderline content gets flagged
-  const flagged = result?.flagged || score >= 30;
+  // Lower threshold to 20 so borderline content gets flagged immediately
+  const flagged = result?.flagged || score >= 20;
 
   console.log(`[ShieldNet] Post result: score=${score} flagged=${flagged} verdict=${result?.verdict}`);
 
@@ -299,7 +310,7 @@ function applyBlurOverlay(post, result, score) {
   overlay.style.cssText = [
     'position:absolute',
     'top:0', 'left:0', 'right:0', 'bottom:0',
-    'z-index:9999',
+    'z-index:2147483646',
     'display:flex',
     'align-items:center',
     'justify-content:center',
