@@ -9,7 +9,7 @@ const SITE_CONFIG = {
     platform: 'twitter',
     postSelector: 'article[data-testid="tweet"]',
     getContent: el => ({
-      text: el.innerText?.trim() || '',
+      text: el.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || el.innerText?.trim() || '',
       author: el.querySelector('[data-testid="User-Name"] span')?.innerText?.trim() || 'unknown'
     })
   },
@@ -17,7 +17,7 @@ const SITE_CONFIG = {
     platform: 'twitter',
     postSelector: 'article[data-testid="tweet"]',
     getContent: el => ({
-      text: el.innerText?.trim() || '',
+      text: el.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || el.innerText?.trim() || '',
       author: el.querySelector('[data-testid="User-Name"] span')?.innerText?.trim() || 'unknown'
     })
   },
@@ -201,61 +201,64 @@ async function flushBatch() {
     text, author, platform: site.platform
   }));
 
-  console.log(`[ShieldNet] Batch call #${totalCallsMade} — ${chunk.length} posts`);
+  console.log(`[ShieldNet] Requesting analysis for ${chunk.length} posts via background bridge...`);
 
-  try {
-    const response = await fetch(BACKEND_BATCH_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ posts: payload })
-    });
-
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const { results } = await response.json();
-
-    // Apply results to DOM — take HIGHER of local vs API score
-    const enriched = chunk.map(({ post, text, author, localScore: ls, localReason: lr }, i) => {
-      const apiResult = results?.[i];
-      const apiScore  = apiResult?.fakeScore ?? 0;
-      const bestScore = Math.max(ls || 0, apiScore);
-      return {
-        post,
-        result: {
-          text, author,
-          fakeScore:   bestScore,
-          risk_score:  bestScore,
-          verdict:     apiResult?.verdict  || (bestScore >= 70 ? 'FAKE' : bestScore >= 40 ? 'MISLEADING' : 'SAFE'),
-          confidence:  apiResult?.confidence || (bestScore >= 60 ? 'High' : 'Medium'),
-          explanation: apiResult?.explanation || lr || 'Local pattern analysis flagged this content.',
-          flagged:     bestScore >= 30,
-        }
-      };
-    });
-
-    // Notify background.js
-    chrome.runtime.sendMessage({ action: 'batch_results', results: enriched.map(e => e.result) }).catch(() => {});
-
-    // Apply to DOM
-    enriched.forEach(({ post, result }) => {
-      post.dataset.snResult = JSON.stringify(result);
-      // Only update overlay if API raised the score above what local already did
-      const prevScore = post.dataset.snLocalResult
-        ? (JSON.parse(post.dataset.snLocalResult).fakeScore || 0) : 0;
-      if (result.fakeScore > prevScore) {
-        // Remove old local overlay if present, then apply upgraded result
-        post.querySelector('.sn-shield-overlay')?.remove();
-        post.classList.remove('sn-protected');
-        Array.from(post.children).forEach(c => {
-          c.style.filter = ''; c.style.pointerEvents = ''; c.style.userSelect = '';
-        });
+  // Delegate fetch to background.js (proxy) to bypass Mixed Content blocks
+  chrome.runtime.sendMessage({ 
+    action: 'execute_batch_analysis', 
+    posts: payload 
+  }, (response) => {
+    try {
+      if (!response || !response.ok) {
+        console.error('[ShieldNet] API bridge error:', response?.error || 'No response');
+        chunk.forEach(item => { item.post.dataset.snPending = null; });
+        return;
       }
-      applyResult(post, result);
-    });
 
-  } catch (err) {
-    console.warn('[ShieldNet] Batch error:', err.message);
-    chunk.forEach(({ post }) => { post.dataset.snPending = null; });
-  }
+      const { results } = response;
+      console.log(`[ShieldNet] API response received for ${results.length} posts.`);
+
+      // Apply results to DOM — take HIGHER of local vs API score
+      const enriched = chunk.map(({ post, text, author, localScore: ls, localReason: lr }, i) => {
+        const apiResult = results?.[i];
+        const apiScore  = apiResult?.fakeScore ?? 0;
+        const bestScore = Math.max(ls || 0, apiScore);
+        return {
+          post,
+          result: {
+            text, author,
+            fakeScore:   bestScore,
+            risk_score:  bestScore,
+            verdict:     apiResult?.verdict  || (bestScore >= 70 ? 'FAKE' : bestScore >= 40 ? 'MISLEADING' : 'SAFE'),
+            confidence:  apiResult?.confidence || (bestScore >= 60 ? 'High' : 'Medium'),
+            explanation: apiResult?.explanation || lr || 'Local pattern analysis flagged this content.',
+            flagged:     bestScore >= 30,
+          }
+        };
+      });
+
+      // Notify background.js
+      chrome.runtime.sendMessage({ action: 'batch_results', results: enriched.map(e => e.result) }).catch(() => {});
+
+      // Apply to DOM
+      enriched.forEach(({ post, result }) => {
+        post.dataset.snResult = JSON.stringify(result);
+        const prevScore = post.dataset.snLocalResult
+          ? (JSON.parse(post.dataset.snLocalResult).fakeScore || 0) : 0;
+        if (result.fakeScore > prevScore) {
+          post.querySelector('.sn-shield-overlay')?.remove();
+          post.classList.remove('sn-protected');
+          Array.from(post.children).forEach(c => {
+            c.style.filter = ''; c.style.pointerEvents = ''; c.style.userSelect = '';
+          });
+        }
+        applyResult(post, result);
+      });
+    } catch (err) {
+      console.warn('[ShieldNet] Batch process error:', err.message);
+      chunk.forEach(item => { item.post.dataset.snPending = null; });
+    }
+  });
 }
 
 // ─── Apply Result to Post ─────────────────────────────────────────────────────

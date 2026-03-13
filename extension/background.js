@@ -1,6 +1,7 @@
 // ShieldNet Background Service Worker
-// content.js now calls the backend directly for batch analysis.
-// This worker only manages badge counts + popup state storage.
+// Handles API calls to localhost:8080 to bypass Mixed Content (HTTPS -> HTTP) blocks 
+// on production sites like Twitter/X and Reddit.
+const BACKEND_BATCH_URL = 'http://localhost:8080/api/analyze/batch';
 
 // Initialize state on install
 chrome.runtime.onInstalled.addListener(() => {
@@ -13,8 +14,32 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log('[ShieldNet] Extension installed.');
 });
 
+// ─── API Proxy ───────────────────────────────────────────────────────────────
+async function proxyAnalyzeBatch(posts) {
+  try {
+    const response = await fetch(BACKEND_BATCH_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ posts })
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return await response.json();
+  } catch (err) {
+    console.error('[ShieldNet background] API Fetch Error:', err.message);
+    throw err;
+  }
+}
+
 // ─── Message Router ───────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+
+  // New action: Request analysis from background
+  if (message.action === 'execute_batch_analysis') {
+    proxyAnalyzeBatch(message.posts)
+      .then(data => sendResponse({ ok: true, results: data.results }))
+      .catch(err => sendResponse({ ok: false, error: err.message }));
+    return true; // Keep channel open for async
+  }
 
   // content.js tells us a batch result arrived
   if (message.action === 'batch_results') {
