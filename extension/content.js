@@ -46,24 +46,15 @@ if (!site) {
 const MISINFO_SIGNALS = {
   // +25 each — blatant misinformation or scam indicators
   high: [
+    // ── BLATANT FAKE NEWS & SCAMS (Force Blur) ──
     /\bfake news\b/i, /\bhoax\b/i, /\bscam alert\b/i, /they don'?t want you to know/i,
     /\bwake up people\b/i, /share before (it'?s )?deleted/i, /\bdeep.?state\b/i,
     /government (is )?hiding/i, /\bplandemic\b/i, /\bcrisis actor/i, /\bfalse flag\b/i,
-    /\bcabal\b/i, /\bthey'?re (putting|spraying|poisoning)/i, /(cures?|kills?) cancer/i,
-    /\bbig pharma\b/i, /vaccine (causes?|gave me)/i, /\b5g (causes?|spread)/i,
-    /\bmicrochip(s|ped)?\b/i, /\bchip in (the )?vaccine/i, /\bnew world order\b/i,
-    /\billuminati\b/i, /chemtrail/i, /stolen election/i, /election was rigged/i,
-    /shadow government/i,
-    // SCAM patterns — treated as misinformation
-    /\bscam\b/i, /\bfraud\b/i, /\bphishing\b/i,
-    /\bsent.{0,15}by mistake/i, /\bsend.{0,15}back/i,
-    /\bit.?s a (scam|trap|fraud)/i, /\b(romance|crypto|pig.?butchering|advance.?fee) scam/i,
-    /\bsim.?swap/i, /\bidentity theft/i, /\byou.{0,10}won\b/i,
+    /stolen election/i, /election was rigged/i, /shadow government/i,
+    /confirmed by (bbc|reuters) to be fake/i, /debunked by/i, /\bthis is fake/i,
+    /\bscam\b/i, /\bfraud\b/i, /\bphishing\b/i, /\bit.?s a (scam|trap|fraud)/i,
     /click (here|this link).{0,20}(win|free|prize)/i,
-    /congratulation.{0,20}(won|winner|selected)/i,
-    /wire transfer.{0,30}urgent/i, /\bunsolicited (wire|payment|transfer)/i,
     /\bgift card.{0,20}(pay|send|buy)/i, /\bsend.{0,15}bitcoin/i,
-    /\bdeposit.{0,20}to claim/i, /\bverify.{0,20}account.{0,20}click/i,
   ],
   // +12 each — suspicious signals
   medium: [
@@ -293,32 +284,31 @@ function applyBlurOverlay(post, result, score) {
   const riskLevel = score >= 70 ? 'HIGH' : score >= 50 ? 'MEDIUM' : 'LOW';
   const accent    = score >= 70 ? '#e11d48' : score >= 50 ? '#f59e0b' : '#f97316';
 
-  // ── Step 1: blur all direct children of the post (safer than blurring post itself) ──
+  // ── Step 1: blur all children with !important to defeat X's native styles ──
   Array.from(post.children).forEach(child => {
-    child.style.filter = 'blur(5px)';
-    child.style.pointerEvents = 'none';
-    child.style.userSelect = 'none';
+    child.style.setProperty('filter', 'blur(12px) grayscale(80%)', 'important');
+    child.style.setProperty('pointer-events', 'none', 'important');
+    child.style.setProperty('user-select', 'none', 'important');
   });
 
   // ── Step 2: make post a positioning context ──
-  const existingPos = window.getComputedStyle(post).position;
-  if (existingPos === 'static') post.style.position = 'relative';
+  post.style.setProperty('position', 'relative', 'important');
 
   // ── Step 3: inject overlay directly inside post ──
   const overlay = document.createElement('div');
   overlay.className = 'sn-shield-overlay';
   overlay.style.cssText = [
-    'position:absolute',
-    'top:0', 'left:0', 'right:0', 'bottom:0',
-    'z-index:2147483646',
-    'display:flex',
-    'align-items:center',
-    'justify-content:center',
-    'background:rgba(15,23,42,0.75)',
-    'backdrop-filter:blur(3px)',
-    '-webkit-backdrop-filter:blur(3px)',
-    'border-radius:inherit',
-    'min-height:80px',
+    'position:absolute !important',
+    'top:0 !important', 'left:0 !important', 'right:0 !important', 'bottom:0 !important',
+    'z-index:2147483646 !important',
+    'display:flex !important',
+    'flex-direction:column !important',
+    'align-items:center !important',
+    'justify-content:center !important',
+    'background:rgba(15,23,42,0.92) !important',
+    'backdrop-filter:blur(8px) !important',
+    'border-radius:inherit !important',
+    'padding:20px !important'
   ].join(';');
 
   overlay.innerHTML = `
@@ -348,27 +338,34 @@ function applyBlurOverlay(post, result, score) {
   `;
 
   overlay.querySelector('.sn-why-btn').addEventListener('click', e => {
-    e.stopPropagation();
-    e.preventDefault();
+    e.stopPropagation(); e.preventDefault();
     showAnalysisModal(result);
   });
 
   overlay.querySelector('.sn-dismiss-btn').addEventListener('click', e => {
-    e.stopPropagation();
-    e.preventDefault();
-    // Unblur children
-    Array.from(post.children).forEach(child => {
-      if (child === overlay) return;
-      child.style.filter = '';
-      child.style.pointerEvents = '';
-      child.style.userSelect = '';
-    });
+    e.stopPropagation(); e.preventDefault();
     overlay.remove();
     post.classList.remove('sn-protected');
+    post.dataset.snDismissed = 'true';
+    Array.from(post.children).forEach(child => {
+      child.style.filter = ''; child.style.pointerEvents = ''; child.style.userSelect = '';
+    });
   });
 
   post.appendChild(overlay);
 
+  // ── Step 4: Re-render Protection (Critical for X/React) ──
+  // If X's React engine removes our overlay or resets styles, this observer pulls it back.
+  const observer = new MutationObserver(() => {
+    if (post.dataset.snDismissed === 'true') { observer.disconnect(); return; }
+    if (!post.contains(overlay)) post.appendChild(overlay);
+    Array.from(post.children).forEach(child => {
+      if (child !== overlay && !child.style.filter.includes('blur')) {
+        child.style.setProperty('filter', 'blur(12px) grayscale(80%)', 'important');
+      }
+    });
+  });
+  observer.observe(post, { childList: true, subtree: true, attributes: true });
 }
 
 // ─── Analysis Modal (View why) ────────────────────────────────────────────────
