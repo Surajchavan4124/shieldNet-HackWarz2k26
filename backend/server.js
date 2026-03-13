@@ -34,6 +34,7 @@ app.use(morgan('dev'));
 import analyzeRoutes from './routes/analyzeRoutes.route.js';
 import reportRoutes from './routes/reportRoutes.route.js';
 import moderationRoutes from './routes/moderationRoutes.route.js';
+import postsRoutes from './routes/postsRoutes.route.js';
 
 // Connect to Database
 if (process.env.MONGODB_URI) {
@@ -58,6 +59,7 @@ app.use('/api/', apiLimiter);
 app.use('/api/analyze', analyzeRoutes);
 app.use('/api/report', reportRoutes);
 app.use('/api/moderation', moderationRoutes);
+app.use('/api/posts', postsRoutes);
 
 // Basic Route
 app.get('/', (req, res) => {

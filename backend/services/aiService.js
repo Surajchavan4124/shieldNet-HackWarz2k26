@@ -207,3 +207,91 @@ JSON FORMAT:
     explanation: 'All AI analysis services are currently unavailable due to rate limits. Please try again in 10 minutes.'
   };
 };
+
+/**
+ * BATCH ANALYSIS ENGINE: Processes up to 10 posts in ONE API call.
+ * This is the ultimate "Index Protection" — saves 90% of Gemini API quota.
+ */
+export const detectMisinformationBatch = async (posts) => {
+  if (!posts || posts.length === 0) return [];
+
+  // Limit batch size to 10 to ensure accuracy and JSON reliability
+  const batch = posts.slice(0, 10);
+  
+  const postsContent = batch.map((p, i) => `POST [${i}]: "${p.text || p.content}"`).join('\n\n');
+
+  const batchPrompt = `You are ShieldNet, a high-speed misinformation indexer. Analyze these ${batch.length} posts.
+For each post, provide a concise verdict and a short factual correction based on known news and data.
+
+POSTS TO ANALYZE:
+${postsContent}
+
+INSTRUCTIONS:
+- For each post, identify if it's FAKE, MISLEADING, OPINION, or SAFE.
+- Provide a fakeScore (0-100).
+- Provide a report (2 sentences max).
+- Return ONLY a raw JSON array of objects.
+
+JSON FORMAT:
+[
+  {
+    "id": 0,
+    "fakeScore": number,
+    "confidence": "High|Medium|Low",
+    "category": "misinformation|conspiracy|scam|opinion|safe",
+    "verdict": "FAKE|MISLEADING|OPINION|SAFE",
+    "report": "Factual statement followed by why post is wrong."
+  },
+  ...
+]`;
+
+  if (!global.apiCooldowns) {
+    global.apiCooldowns = { gemini1: 0, gemini2: 0, gemini3: 0, gemini4: 0, openai1: 0, openai2: 0 };
+  }
+
+  const tryBatchGemini = async (apiKey, keyName) => {
+    if (!apiKey || Date.now() < global.apiCooldowns[keyName]) return null;
+    try {
+      console.log(`[ShieldNet] Attempting BATCH analysis with ${keyName} for ${batch.length} posts...`);
+      const ai = new GoogleGenAI({ apiKey });
+      const model = ai.getGenerativeModel({ model: 'gemini-2.0-flash' });
+      const result = await model.generateContent(batchPrompt);
+      const text = result.response.text();
+      const parsed = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+      
+      return parsed.map(item => ({
+        fakeScore: item.fakeScore || 0,
+        confidence: item.confidence || 'Medium',
+        category: item.category || 'unverified',
+        verdict: item.verdict || 'SAFE',
+        explanation: item.report || 'Analysis complete.',
+      }));
+    } catch (err) {
+      console.warn(`[ShieldNet] Batch ${keyName} failed: ${err.message}`);
+      if (err.message?.includes('429') || err.message?.includes('quota')) {
+        global.apiCooldowns[keyName] = Date.now() + (10 * 60 * 1000);
+      }
+      return null;
+    }
+  };
+
+  let results = await tryBatchGemini(process.env.GEMINI_API_KEY_1 || process.env.GEMINI_API_KEY, 'gemini1');
+  if (!results) results = await tryBatchGemini(process.env.GEMINI_API_KEY_2, 'gemini2');
+  if (!results) results = await tryBatchGemini(process.env.GEMINI_API_KEY_3, 'gemini3');
+  if (!results) results = await tryBatchGemini(process.env.GEMINI_API_KEY_4, 'gemini4');
+
+  if (results) {
+    console.log(`[ShieldNet] Successfully indexed ${results.length} posts in ONE call.`);
+    return results;
+  }
+
+  // Fallback to error objects if all keys fail
+  return batch.map(() => ({
+    fakeScore: -1,
+    confidence: 'None',
+    category: 'error',
+    verdict: 'UNKNOWN',
+    explanation: 'Batch analysis unavailable due to rate limits.'
+  }));
+};
+

@@ -1,11 +1,12 @@
 import express from 'express';
-import { analyzeContent } from '../controllers/analyzeController.js';
+import { analyzeContent, analyzeBatch } from '../controllers/analyzeController.js';
 
 const router = express.Router();
 
-// @route   POST /api/analyze
-// @desc    Analyze text for misinformation and save if flagged
-// @access  Public (from extension)
+// POST /api/analyze          — single post (from extension/manual)
 router.post('/', analyzeContent);
+
+// POST /api/analyze/batch    — up to 10 posts in ONE Gemini call
+router.post('/batch', analyzeBatch);
 
 export default router;

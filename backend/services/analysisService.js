@@ -1,4 +1,4 @@
-import { detectMisinformation } from './aiService.js';
+import { detectMisinformation, detectMisinformationBatch } from './aiService.js';
 import { detectMisinformationOpenAI } from './openaiService.js';
 import { detectMisinformationHF } from './hfService.js';
 import { detectWithPythonAI } from './pythonAiService.js';
@@ -242,10 +242,126 @@ export const analyzePost = async (text, platform, author = 'unknown', force = fa
   resolveInflight(result);
 
   return result;
+};
+
+/**
+ * NEW: NEWS SOURCE VERIFICATION ENGINE
+ * Checks if a post is confirmed by major trusted news outlets (BBC, Reuters, etc.)
+ */
+const TRUSTED_DOMAINS = [
+  'bbc.com', 'bbc.co.uk', 'reuters.com', 'apnews.com', 'nytimes.com',
+  'theguardian.com', 'wsj.com', 'bloomberg.com', 'npr.org', 'aljazeera.com'
+];
+
+export const checkNewsVerification = async (text) => {
+  console.log(`[ShieldNet] Verifying against news outlets: "${text.substring(0, 30)}..."`);
+  const { results: tavilyResults } = await getSources(text).catch(() => ({ results: [] }));
+  
+  const newsHit = tavilyResults.find(r => {
+    const url = (r.url || '').toLowerCase();
+    return TRUSTED_DOMAINS.some(d => url.includes(d));
+  });
+
+  if (newsHit) {
+    console.log(`[ShieldNet] News verified: ${newsHit.url}`);
+    return {
+      verified: true,
+      source: new URL(newsHit.url).hostname,
+      url: newsHit.url,
+      title: newsHit.title
+    };
+  }
+  return { verified: false };
+};
+
+/**
+ * BATCH ANALYSIS WRAPPER
+ * Processes up to 10 posts in ONE hit.
+ * Intelligent Pipeline: Local -> News Check -> Gemini Batch
+ */
+export const batchAnalyzePosts = async (posts) => {
+  if (!posts || posts.length === 0) return [];
+
+  console.log(`[ShieldNet] Starting BATCH PIPELINE for ${posts.length} posts...`);
+  
+  const results = new Array(posts.length).fill(null);
+  const nebulaCandidates = []; // Posts that still need Gemini after news check
+
+  // 1. News Verification Pre-Check (Saves Gemini Quota)
+  for (let i = 0; i < posts.length; i++) {
+    const post = posts[i];
+    const newsMatch = await checkNewsVerification(post.text || post.content).catch(() => ({ verified: false }));
+    
+    if (newsMatch.verified) {
+      console.log(`[ShieldNet] NEWS HIT: Skip Gemini for "${post.text?.substring(0, 20)}..."`);
+      results[i] = {
+        ...post,
+        fakeScore: 5, // Confirmed safe by reputable news
+        aiConfidence: 98,
+        verdict: 'SAFE',
+        category: 'news',
+        explanation: `Verified by ${newsMatch.source}. This topic is being reported by credible news outlets: ${newsMatch.title}`,
+        analyzedBy: 'news-verify',
+        analyzed: true
+      };
+    } else {
+      nebulaCandidates.push({ index: i, post });
+    }
   }
 
+  // 2. Escalate remaining candidates to Gemini Batch Engine
+  if (nebulaCandidates.length > 0) {
+    const geminiBatch = nebulaCandidates.map(c => c.post);
+    const geminiResults = await detectMisinformationBatch(geminiBatch);
+    
+    geminiResults.forEach((verdict, i) => {
+      const originalIndex = nebulaCandidates[i].index;
+      results[originalIndex] = {
+        ...posts[originalIndex],
+        fakeScore: verdict.fakeScore,
+        aiConfidence: verdict.confidence === 'High' ? 95 : (verdict.confidence === 'Medium' ? 75 : 45),
+        verdict: verdict.verdict,
+        category: verdict.category,
+        explanation: verdict.explanation,
+        analyzedBy: 'gemini-batch',
+        analyzed: true
+      };
+    });
+  }
+
+  // 3. DATABASE RECORDING: Save any flagged results (score >= 35) to MongoDB
+  const flaggedToSave = results.filter(r => r && (r.fakeScore >= 35 || r.verdict === 'FAKE' || r.verdict === 'MISLEADING'));
+  
+  if (flaggedToSave.length > 0) {
+    console.log(`[ShieldNet] Saving ${flaggedToSave.length} flagged posts from batch to DB...`);
+    for (const res of flaggedToSave) {
+      try {
+        const flaggedPost = new FlaggedPost({
+          text: res.text || res.content,
+          platform: res.platform || 'other',
+          fakeScore: res.fakeScore,
+          confidence: res.aiConfidence > 70 ? 'High' : 'Medium',
+          explanation: res.explanation,
+          sources: res.verified_sources || [],
+          status: 'pending',
+          metadata: { 
+            analyzedBy: res.analyzedBy,
+            author: res.author || 'unknown',
+            batchId: Date.now()
+          }
+        });
+        await flaggedPost.save();
+      } catch (dbErr) {
+        console.error('[ShieldNet] Batch DB save error:', dbErr.message);
+      }
+    }
+  }
+  
+  return results;
+};
 
 function getDefaultSources(category) {
+
   const defaults = {
     'health misinformation': [
       { title: 'WHO: Health Myths Debunked', url: 'https://www.who.int/emergencies/diseases/novel-coronavirus-2019/advice-for-public/myth-busters' },
