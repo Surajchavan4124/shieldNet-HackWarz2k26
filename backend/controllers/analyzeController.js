@@ -139,7 +139,7 @@ Return a JSON array of ${batch.length} objects:
 - fakeScore: 0-100 (High score if EVIDENCE says CONFIRMED FAKE, Low if SAFE)
 - verdict: "FAKE" | "MISLEADING" | "SCAM" | "SAFE"
 - confidence: "High" | "Medium" | "Low"
-- reason: Mention the specific evidence if provided (e.g., "Confirmed as a hoax by BBC Reality Check").
+- reason: A detailed 2-3 sentence explanation of why this post was flagged. Mention the specific evidence or news source if provided.
 
 Return ONLY raw JSON, no text.`;
 
