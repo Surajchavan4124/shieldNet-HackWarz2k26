@@ -42,6 +42,116 @@ if (!site) {
   console.info('[ShieldNet] Unsupported site — scanner idle.');
 }
 
+// ─── LOCAL KEYWORD SCORER (runs instantly, no API needed) ───────────────────
+const MISINFO_SIGNALS = {
+  // +25 each — blatant misinformation or scam indicators
+  high: [
+    /\bfake news\b/i, /\bhoax\b/i, /\bscam alert\b/i, /they don'?t want you to know/i,
+    /\bwake up people\b/i, /share before (it'?s )?deleted/i, /\bdeep.?state\b/i,
+    /government (is )?hiding/i, /\bplandemic\b/i, /\bcrisis actor/i, /\bfalse flag\b/i,
+    /\bcabal\b/i, /\bthey'?re (putting|spraying|poisoning)/i, /(cures?|kills?) cancer/i,
+    /\bbig pharma\b/i, /vaccine (causes?|gave me)/i, /\b5g (causes?|spread)/i,
+    /\bmicrochip(s|ped)?\b/i, /\bchip in (the )?vaccine/i, /\bnew world order\b/i,
+    /\billuminati\b/i, /chemtrail/i, /stolen election/i, /election was rigged/i,
+    /shadow government/i,
+    // SCAM patterns — treated as misinformation
+    /\bscam\b/i, /\bfraud\b/i, /\bphishing\b/i,
+    /\bsent.{0,15}by mistake/i, /\bsend.{0,15}back/i,
+    /\bit.?s a (scam|trap|fraud)/i, /\b(romance|crypto|pig.?butchering|advance.?fee) scam/i,
+    /\bsim.?swap/i, /\bidentity theft/i, /\byou.{0,10}won\b/i,
+    /click (here|this link).{0,20}(win|free|prize)/i,
+    /congratulation.{0,20}(won|winner|selected)/i,
+    /wire transfer.{0,30}urgent/i, /\bunsolicited (wire|payment|transfer)/i,
+    /\bgift card.{0,20}(pay|send|buy)/i, /\bsend.{0,15}bitcoin/i,
+    /\bdeposit.{0,20}to claim/i, /\bverify.{0,20}account.{0,20}click/i,
+  ],
+  // +12 each — suspicious signals
+  medium: [
+    /\bconspiracy\b/i, /\belites?\b/i, /\bthey'?re lying\b/i, /\bcensored\b/i,
+    /\bsuppressed\b/i, /\bexposed\b/i, /what (they|media) won'?t (tell|show)/i,
+    /\b100%\s*(proven|confirmed|effective)/i, /no one is talking about/i,
+    /\bbreaking:?\b/i, /\burgent:?\b/i, /\bexclusive:?\b/i,
+    /the truth about/i, /mainstream media (lies|hiding)/i,
+    /\bsteal(ing)? (your|my).{0,15}(money|identity|account)/i,
+    /report.{0,20}(transaction|fraud|scam)/i,
+    /\bsuspicious (activity|link|email|message)/i,
+    /\bdo not (click|open|reply)/i,
+    /\bthis is (a|not) legitimate/i,
+  ],
+  // +8 each — claim indicators
+  claims: [
+    /scientists? (prove[sd]?|confir(m|med)|found)\b/i,
+    /studies? (show|prove|confirm)/i,
+    /according to (sources?|insiders?|whistleblower)/i,
+    /(leaked|classified) document/i, /miracle cure/i,
+    /naturally (cure|treat|heal)/i, /instantly (cure|stop|reverse)/i,
+  ],
+  // +6 each — emotional amplifiers
+  emotional: [
+    /!!{2,}/, /\bOMG\b/i, /\bshocking\b/i, /\bterrifyin/i,
+    /\boutrageous\b/i, /\bmust (see|watch|read|share)/i, /\bviral\b/i,
+    /BREAKING/,
+  ]
+};
+
+function localScore(text) {
+  if (!text || text.length < 15) return { score: 0, reason: '' };
+  let score = 0;
+  let hits = [];
+
+  const check = (list, val, label) => {
+    let found = false;
+    for (const p of list) {
+      if (p.test(text)) {
+        score += val;
+        found = true;
+      }
+    }
+    if (found) hits.push(label);
+  };
+
+  // Check specific categories for better "Why?" info
+  // ── Scams ──
+  const scamPatterns = [
+    /\bscam\b/i, /\bfraud\b/i, /\bphishing\b/i, /\bsim.?swap/i, /\bidentity theft/i,
+    /sent.{0,15}by mistake/i, /send.{0,15}back/i, /wire transfer/i, /gift card/i, /bitcoin/i
+  ];
+  let isScam = false;
+  for (const p of scamPatterns) if (p.test(text)) { isScam = true; score += 25; break; }
+  if (isScam) hits.push("Common scam or phishing pattern detected");
+
+  // ── Conspiracies ──
+  const conspiracyPatterns = [
+    /\bdeep.?state\b/i, /\bplandemic\b/i, /\b5g\b/i, /\bmicrochip\b/i, /\bcabal\b/i,
+    /new world order/i, /stolen election/i, /chemtrail/i, /shadow government/i
+  ];
+  let isConspiracy = false;
+  for (const p of conspiracyPatterns) if (p.test(text)) { isConspiracy = true; score += 25; break; }
+  if (isConspiracy) hits.push("Known conspiracy theory keywords identified");
+
+  // ── General Signals ──
+  check(MISINFO_SIGNALS.medium, 12, "Suspicious or sensationalist language");
+  check(MISINFO_SIGNALS.claims, 8, "Unverified scientific or medical claims");
+  check(MISINFO_SIGNALS.emotional, 6, "Alarmist or highly emotional tone");
+
+  // ALL-CAPS boost
+  const words = text.split(/\s+/).filter(w => w.length > 3);
+  if (words.length > 0) {
+    const capsRatio = words.filter(w => w === w.toUpperCase() && /[A-Z]/.test(w)).length / words.length;
+    if (capsRatio > 0.35) {
+      score += 15;
+      hits.push("Aggressive use of capitalization (All-Caps)");
+    }
+  }
+
+  const finalScore = Math.min(score, 100);
+  let reason = hits.length > 0
+    ? `ShieldNet local analysis found: ${hits.join(', ')}.`
+    : "ShieldNet detected patterns commonly associated with misleading or malicious content.";
+
+  return { score: finalScore, reason };
+}
+
 // ─── Batch Queue ──────────────────────────────────────────────────────────────
 const BATCH_SIZE      = 10;   // Posts per API call
 const BATCH_DELAY_MS  = 1500; // Wait this long before sending a partial batch
@@ -51,15 +161,32 @@ let   totalCallsMade  = 0;
 const MAX_CALLS       = 200;
 
 function queuePost(post, text, author) {
-  if (totalCallsMade >= MAX_CALLS) return; // Hard session cap
+  if (totalCallsMade >= MAX_CALLS) return;
 
-  pendingBatch.push({ post, text, author });
+  // ── INSTANT local check — threshold 30: blur immediately on any strong match ──
+  const { score: ls, reason: lsReason } = localScore(text);
+  if (ls >= 30 && !post.classList.contains('sn-protected')) {
+    const localResult = {
+      text, author,
+      fakeScore:   ls,
+      risk_score:  ls,
+      verdict:     ls >= 70 ? 'FAKE' : 'MISLEADING',
+      confidence:  ls >= 70 ? 'High' : 'Medium',
+      explanation: lsReason,
+      flagged:     true
+    };
+    post.dataset.snLocalResult = JSON.stringify(localResult);
+    applyBlurOverlay(post, localResult, ls);
+    console.log(`[ShieldNet] LOCAL BLUR: score=${ls} on "${text.substring(0,40)}..."`);
+  }
+
+  pendingBatch.push({ post, text, author, localScore: ls, localReason: lsReason });
   clearTimeout(batchTimer);
 
   if (pendingBatch.length >= BATCH_SIZE) {
-    flushBatch();                            // Full batch — send immediately
+    flushBatch();
   } else {
-    batchTimer = setTimeout(flushBatch, BATCH_DELAY_MS); // Partial — wait
+    batchTimer = setTimeout(flushBatch, BATCH_DELAY_MS);
   }
 }
 
@@ -86,19 +213,42 @@ async function flushBatch() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const { results } = await response.json();
 
-    // Debug: log what the API returned
-    console.log('[ShieldNet] Batch results:', results?.map(r => ({
-      score: r.fakeScore, verdict: r.verdict, flagged: r.flagged
-    })));
+    // Apply results to DOM — take HIGHER of local vs API score
+    const enriched = chunk.map(({ post, text, author, localScore: ls, localReason: lr }, i) => {
+      const apiResult = results?.[i];
+      const apiScore  = apiResult?.fakeScore ?? 0;
+      const bestScore = Math.max(ls || 0, apiScore);
+      return {
+        post,
+        result: {
+          text, author,
+          fakeScore:   bestScore,
+          risk_score:  bestScore,
+          verdict:     apiResult?.verdict  || (bestScore >= 70 ? 'FAKE' : bestScore >= 40 ? 'MISLEADING' : 'SAFE'),
+          confidence:  apiResult?.confidence || (bestScore >= 60 ? 'High' : 'Medium'),
+          explanation: apiResult?.explanation || lr || 'Local pattern analysis flagged this content.',
+          flagged:     bestScore >= 30,
+        }
+      };
+    });
 
-    // Notify background.js for popup stats
-    chrome.runtime.sendMessage({ action: 'batch_results', results }).catch(() => {});
+    // Notify background.js
+    chrome.runtime.sendMessage({ action: 'batch_results', results: enriched.map(e => e.result) }).catch(() => {});
 
-    // Apply results to DOM
-    chunk.forEach(({ post }, i) => {
-      const result = results?.[i];
-      if (!result) return;
+    // Apply to DOM
+    enriched.forEach(({ post, result }) => {
       post.dataset.snResult = JSON.stringify(result);
+      // Only update overlay if API raised the score above what local already did
+      const prevScore = post.dataset.snLocalResult
+        ? (JSON.parse(post.dataset.snLocalResult).fakeScore || 0) : 0;
+      if (result.fakeScore > prevScore) {
+        // Remove old local overlay if present, then apply upgraded result
+        post.querySelector('.sn-shield-overlay')?.remove();
+        post.classList.remove('sn-protected');
+        Array.from(post.children).forEach(c => {
+          c.style.filter = ''; c.style.pointerEvents = ''; c.style.userSelect = '';
+        });
+      }
       applyResult(post, result);
     });
 
@@ -263,10 +413,26 @@ function showAnalysisModal(data) {
         </div>
       </div>
 
+      <!-- Analyzed Content Section -->
+      <div style="margin:0 20px 16px; padding:15px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px; position:relative;">
+        <div style="font-size:10px; font-weight:700; color:#94a3b8; letter-spacing:1.5px; text-transform:uppercase; margin-bottom:8px; display:flex; justify-content:space-between;">
+          <span>Analyzed Content</span>
+          <span style="color:#64748b;">u/${data.author || 'unknown'}</span>
+        </div>
+        <p style="font-size:13px; color:#475569; line-height:1.5; margin:0; font-style:italic;">
+          "${data.text || 'No content captured.'}"
+        </p>
+      </div>
+
       <!-- Explanation -->
       <div style="padding:0 20px 16px;">
-        <div style="font-size:10px;font-weight:700;color:#94a3b8;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px;">Why is this flagged?</div>
-        <p style="font-size:14px;color:#334155;line-height:1.65;margin:0;">${data.explanation || 'No explanation available.'}</p>
+        <div style="font-size:10px; font-weight:700; color:#4f46e5; letter-spacing:1px; text-transform:uppercase; margin-bottom:8px;">ShieldNet Analysis Explanation</div>
+        <div style="display:flex; gap:12px;">
+          <div style="flex-shrink:0; width:2px; background:#4f46e5; border-radius:2px;"></div>
+          <p style="font-size:14px; color:#1e293b; line-height:1.6; margin:0; font-weight:500;">
+            ${data.explanation || 'Our AI is flagging this content based on detected misinformation patterns related to scams or false claims.'}
+          </p>
+        </div>
       </div>
 
       <!-- Sources -->

@@ -1,184 +1,218 @@
-import { analyzePost } from '../services/analysisService.js';
-import { detectMisinformationBatch } from '../services/aiService.js';
+import { GoogleGenAI } from '@google/genai';
+import OpenAI from 'openai';
 import FlaggedPost from '../models/FlaggedPost.model.js';
+import { getSources } from '../services/sourceService.js';
 
-// ─── Single post (used by extension manual trigger / tests) ──────────────────
+// ── Shared Domain Lists (Fact-checks & Trusted News) ──────────────────────────
+const FACT_CHECK_DOMAINS = [
+  'snopes.com', 'factcheck.org', 'politifact.com', 'reuters.com', 'apnews.com',
+  'fullfact.org', 'factly.in', 'boomlive.in', 'thequint.com', 'altnews.in',
+  'indiatoday.in/fact-check', 'ndtv.com/fact-check', 'bbc.com/news/reality_check'
+];
+const TRUSTED_NEWS_DOMAINS = [
+  'reuters.com', 'apnews.com', 'bbc.com', 'bbc.co.uk', 'nytimes.com', 'npr.org',
+  'wsj.com', 'bloomberg.com', 'theguardian.com', 'washingtonpost.com', 'aljazeera.com',
+  'timesofindia.indiatimes.com', 'thehindu.com', 'cnn.com'
+];
+const FAKE_SIGNALS = ['false', 'fake', 'misleading', 'misinformation', 'debunked', 'hoax', 'claim is fake'];
+
+// ─── Single post (Legacy/Manual) ─────────────────────────────────────────────
+import { analyzePost } from '../services/analysisService.js';
 export const analyzeContent = async (req, res, next) => {
   try {
     const { text, platform, author, force } = req.body;
     if (!text || typeof text !== 'string' || text.trim().length === 0) {
-      res.status(400);
-      throw new Error('Valid text content is required');
+      res.status(400); throw new Error('Valid text content is required');
     }
-    const result = await analyzePost(
-      text.trim(),
-      (platform || 'other').toLowerCase(),
-      author || 'unknown',
-      force
-    );
+    const result = await analyzePost(text.trim(), (platform||'other').toLowerCase(), author||'unknown', force);
     res.status(200).json(result);
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
-// ─── Batch endpoint: accepts array of up to 10 posts, ONE Gemini call ─────────
-// Body: { posts: [ { text, author, platform }, ... ], limit?: 200 }
-const GLOBAL_CALL_LIMIT = 200;
-let globalCallCount = 0;
+// ─── Robust JSON extractor ───────────────────────────────────────────────────
+function extractJsonArray(raw = '') {
+  if (!raw) return null;
+  let cleaned = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+  try {
+    const parsed = JSON.parse(cleaned);
+    if (Array.isArray(parsed)) return parsed;
+    const first = parsed.results || parsed.posts || parsed.data || Object.values(parsed).find(Array.isArray);
+    if (Array.isArray(first)) return first;
+  } catch (_) {}
+  const match = cleaned.match(/\[\s*\{[\s\S]*\}\s*\]/);
+  if (match) { try { return JSON.parse(match[0]); } catch (_) {} }
+  return null;
+}
+
+// ── Rate limiter (100 calls / 5 min) ────────────────────────────────────────
+const RATE_WINDOW_MS  = 5 * 60 * 1000;
+const RATE_MAX_CALLS  = 100;
+let   windowCallCount = 0;
+let   windowStart     = Date.now();
+
+function checkRateLimit() {
+  const now = Date.now();
+  if (now - windowStart >= RATE_WINDOW_MS) {
+    windowCallCount = 0; windowStart = now;
+    console.log('[ShieldNet] Rate limit window reset.');
+  }
+  if (windowCallCount >= RATE_MAX_CALLS) return false;
+  windowCallCount++;
+  return true;
+}
 
 export const analyzeBatch = async (req, res, next) => {
   try {
     const { posts } = req.body;
-
     if (!Array.isArray(posts) || posts.length === 0) {
       return res.status(400).json({ error: 'posts[] array required' });
     }
 
-    // Hard limit: max 10 per call, max 200 total session calls
     const batch = posts.slice(0, 10);
-
-    if (globalCallCount >= GLOBAL_CALL_LIMIT) {
-      console.warn('[ShieldNet] Global API call limit (200) reached for this session.');
+    if (!checkRateLimit()) {
       return res.status(429).json({
-        error: 'Session limit reached',
+        error: 'Rate limit reached (100 calls / 5 min)',
         results: batch.map(p => ({
-          text: p.text,
-          fakeScore: 0,
-          verdict: 'SAFE',
-          confidence: 'Low',
-          explanation: 'API limit reached for this session. Posts not analyzed.',
-          flagged: false
+          text: p.text, fakeScore: 0, verdict: 'SAFE',
+          confidence: 'Low', explanation: 'API rate limit reached.', flagged: false
         }))
       });
     }
-    globalCallCount++;
 
-    // ── Build one compact prompt for all posts ─────────────────────────────────
-    const postLines = batch.map((p, i) =>
-      `[${i}] "${(p.text || '').replace(/"/g, "'").substring(0, 300)}"`
-    ).join('\n\n');
+    // ── STEP 1: Parallel News/Fact-Check Confirmation ────────────────────────
+    console.log(`[ShieldNet Batch] Verifying ${batch.length} posts against trusted sources...`);
+    const sourcePromises = batch.map(p => getSources(p.text));
+    const allSources = await Promise.all(sourcePromises);
 
-    const prompt = `You are ShieldNet, a misinformation fact-checker. Analyze these ${batch.length} social media posts.
-For each post, determine if it is FAKE, MISLEADING, OPINION, or SAFE based on journalistic standards.
-Return ONLY a valid JSON array. No markdown, no extra text.
+    const groundTruths = batch.map((p, i) => {
+      const { results: tavilyResults, formatted } = allSources[i];
+      
+      // Fact-check check
+      const factCheckHit = tavilyResults.find(r => {
+        const url = (r.url || '').toLowerCase();
+        const content = ((r.title || '') + ' ' + (r.content || '')).toLowerCase();
+        return FACT_CHECK_DOMAINS.some(d => url.includes(d)) && FAKE_SIGNALS.some(s => content.includes(s));
+      });
 
-POSTS:
+      // Trusted News check
+      const trustedHit = tavilyResults.find(r => {
+        const url = (r.url || '').toLowerCase();
+        return TRUSTED_NEWS_DOMAINS.some(d => url.includes(d));
+      });
+
+      return {
+        isFakeConfirmed: !!factCheckHit,
+        isSafeConfirmed: !!trustedHit && !factCheckHit,
+        evidence: factCheckHit || trustedHit,
+        allSources: formatted
+      };
+    });
+
+    // ── STEP 2: Build Enhanced AI Prompt ─────────────────────────────────────
+    const postLines = batch.map((p, i) => {
+      const gt = groundTruths[i];
+      let evidenceStr = 'NONE';
+      if (gt.isFakeConfirmed) evidenceStr = `CONFIRMED FAKE via ${gt.evidence.url}`;
+      else if (gt.isSafeConfirmed) evidenceStr = `REPORTED BY TRUSTED NEWS via ${gt.evidence.url}`;
+      
+      return `POST[${i}]: "${p.text?.substring(0, 300)}" \nEVIDENCE: ${evidenceStr}`;
+    }).join('\n\n');
+
+    const prompt = `You are ShieldNet AI. Analyze these ${batch.length} posts using the provided EVIDENCE where available. 
+
 ${postLines}
 
-JSON FORMAT (array of ${batch.length} objects):
-[
-  {
-    "id": 0,
-    "fakeScore": <0-100 integer>,
-    "verdict": "FAKE|MISLEADING|OPINION|SAFE",
-    "confidence": "High|Medium|Low",
-    "reason": "<2 concise sentences explaining the verdict>"
-  }
-]`;
+Return a JSON array of ${batch.length} objects:
+- id: integer
+- fakeScore: 0-100 (High score if EVIDENCE says CONFIRMED FAKE, Low if SAFE)
+- verdict: "FAKE" | "MISLEADING" | "SCAM" | "SAFE"
+- confidence: "High" | "Medium" | "Low"
+- reason: Mention the specific evidence if provided (e.g., "Confirmed as a hoax by BBC Reality Check").
 
-    // ── Try each Gemini key in order, then OpenAI as fallback ─────────────────
-    const { GoogleGenAI } = await import('@google/genai');
-    const OpenAI = (await import('openai')).default;
+Return ONLY raw JSON, no text.`;
 
-    if (!global.apiCooldowns) {
-      global.apiCooldowns = { gemini1: 0, gemini2: 0, gemini3: 0, gemini4: 0, openai1: 0, openai2: 0 };
-    }
-    const COOLDOWN_MS = 10 * 60 * 1000;
-    const now = () => Date.now();
+    // ── STEP 3: API Rotation Logic ───────────────────────────────────────────
+    if (!global.apiCooldowns) global.apiCooldowns = {};
+    const nowMs = () => Date.now();
+    const IS_DEV   = process.env.NODE_ENV !== 'production';
+    const COOLDOWN = IS_DEV ? 60 * 1000 : 10 * 60 * 1000;
 
     const keys = [
-      { key: process.env.GEMINI_API_KEY_1, name: 'gemini1', type: 'gemini' },
-      { key: process.env.GEMINI_API_KEY_2, name: 'gemini2', type: 'gemini' },
-      { key: process.env.GEMINI_API_KEY_3, name: 'gemini3', type: 'gemini' },
-      { key: process.env.GEMINI_API_KEY_4, name: 'gemini4', type: 'gemini' },
-      { key: process.env.OPENAI_API_KEY_1, name: 'openai1', type: 'openai' },
-      { key: process.env.OPENAI_API_KEY_2, name: 'openai2', type: 'openai' },
-    ];
+      ...[1,2,3,4,5,6,7,8,9,10].map(n => ({ key: process.env[`GEMINI_API_KEY_${n}`], name: `gemini${n}`, type: 'gemini' })),
+      ...[1,2,3,4].map(n => ({ key: process.env[`OPENAI_API_KEY_${n}`], name: `openai${n}`, type: 'openai' }))
+    ].filter(k => k.key && k.key.trim().length > 10);
+
+    keys.forEach(k => { if (!(k.name in global.apiCooldowns)) global.apiCooldowns[k.name] = 0; });
 
     let parsed = null;
-
     for (const { key, name, type } of keys) {
-      if (!key || key.startsWith('your_') || now() < global.apiCooldowns[name]) continue;
-
+      if (nowMs() < global.apiCooldowns[name]) continue;
       try {
-        console.log(`[ShieldNet Batch] Trying ${name} for ${batch.length} posts...`);
         let raw = '';
-
         if (type === 'gemini') {
           const ai = new GoogleGenAI({ apiKey: key });
-          const result = await ai.models.generateContent({
-            model: 'gemini-2.0-flash',
-            contents: prompt
-          });
-          raw = result.text;
+          const result = await ai.models.generateContent({ model: 'gemini-2.0-flash', contents: prompt });
+          raw = result.text || '';
         } else {
           const openai = new OpenAI({ apiKey: key });
           const completion = await openai.chat.completions.create({
             model: 'gpt-4o-mini',
-            messages: [{ role: 'user', content: prompt }],
-            response_format: { type: 'json_object' }
+            messages: [{ role: 'system', content: 'JSON API.' }, { role: 'user', content: prompt }]
           });
-          // gpt-4o-mini wraps array in object
-          const obj = JSON.parse(completion.choices[0].message.content);
-          raw = JSON.stringify(obj.results || obj.posts || Object.values(obj)[0] || []);
+          raw = completion.choices[0].message.content || '';
         }
 
-        parsed = JSON.parse(raw.replace(/```json/g, '').replace(/```/g, '').trim());
-        if (!Array.isArray(parsed)) parsed = parsed.results || parsed.posts || null;
-        if (Array.isArray(parsed)) {
-          console.log(`[ShieldNet Batch] ${name} succeeded for ${parsed.length} posts.`);
-          break;
-        }
+        parsed = extractJsonArray(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) break;
       } catch (err) {
-        console.warn(`[ShieldNet Batch] ${name} failed: ${err.message}`);
         if (err.message?.includes('429') || err.message?.includes('quota')) {
-          global.apiCooldowns[name] = now() + COOLDOWN_MS;
+          global.apiCooldowns[name] = nowMs() + COOLDOWN;
         }
-        parsed = null;
       }
     }
 
-    // ── Map results back to original posts ────────────────────────────────────
+    // ── STEP 4: Final Results Mapping ────────────────────────────────────────
     const results = batch.map((p, i) => {
-      const verdict = parsed?.[i];
-      const fakeScore = verdict?.fakeScore ?? 0;
+      const v = parsed?.[i];
+      const gt = groundTruths[i];
+      let fakeScore = typeof v?.fakeScore === 'number' ? v.fakeScore : 0;
+      
+      // Force result if News Confirmation was decisive
+      if (gt.isFakeConfirmed) fakeScore = Math.max(fakeScore, 90);
+      if (gt.isSafeConfirmed) fakeScore = Math.min(fakeScore, 10);
+
+      const finalVerdict = gt.isFakeConfirmed ? 'FAKE' : (gt.isSafeConfirmed ? 'SAFE' : (v?.verdict || 'SAFE'));
+      const finalConfidence = (gt.isFakeConfirmed || gt.isSafeConfirmed) ? 'High' : (v?.confidence || 'Low');
+      const finalReason = v?.reason || (gt.isFakeConfirmed ? `Confirmed misinformation by ${new URL(gt.evidence.url).hostname}.` : (gt.isSafeConfirmed ? `Verified by ${new URL(gt.evidence.url).hostname}.` : 'Analyzed by ShieldNet AI.'));
+
       return {
-        text: p.text,
-        author: p.author || 'unknown',
-        platform: p.platform || 'other',
+        text:        p.text,
+        author:      p.author || 'unknown',
+        platform:    p.platform || 'other',
         fakeScore,
-        verdict: verdict?.verdict ?? 'SAFE',
-        confidence: verdict?.confidence ?? 'Low',
-        explanation: verdict?.reason ?? 'Analysis complete.',
-        flagged: fakeScore >= 35,
-        risk_score: fakeScore,
-        verified_sources: [],
+        verdict:     finalVerdict,
+        confidence:  finalConfidence,
+        explanation: finalReason,
+        flagged:     fakeScore >= 30,
+        risk_score:  fakeScore,
+        verified_sources: gt.allSources,
       };
     });
 
-    // ── Persist flagged posts to MongoDB ─────────────────────────────────────
-    for (const r of results.filter(r => r.flagged)) {
+    // ── STEP 5: DB Save & Respond ────────────────────────────────────────────
+    const flagged = results.filter(r => r.flagged);
+    for (const r of flagged) {
       try {
         await new FlaggedPost({
-          text: r.text,
-          platform: r.platform,
-          fakeScore: r.fakeScore,
-          confidence: r.confidence === 'High' ? 'High' : r.confidence === 'Medium' ? 'Medium' : 'Low',
-          explanation: r.explanation,
-          sources: [],
-          status: 'pending',
-          metadata: { author: r.author, analyzedBy: 'gemini-batch' }
+          text: r.text, platform: r.platform, fakeScore: r.fakeScore,
+          confidence: r.confidence === 'High' ? 'High' : (r.confidence === 'Medium' ? 'Medium' : 'Low'),
+          explanation: r.explanation, sources: r.verified_sources, status: 'pending',
+          metadata: { author: r.author, analyzedBy: 'shieldnet-pipeline' }
         }).save();
-      } catch (dbErr) {
-        console.error('[ShieldNet] DB save error:', dbErr.message);
-      }
+      } catch (e) {}
     }
 
-    console.log(`[ShieldNet Batch] Done. Global calls: ${globalCallCount}/${GLOBAL_CALL_LIMIT}`);
-    res.status(200).json({ results, callsUsed: globalCallCount, callsMax: GLOBAL_CALL_LIMIT });
+    res.status(200).json({ results, callsUsed: windowCallCount, callsMax: RATE_MAX_CALLS });
 
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
