@@ -92,8 +92,15 @@ document.addEventListener('DOMContentLoaded', () => {
   function updateStatsUI(res) {
     statsScanned.textContent = res.scannedCount || 0;
     statsFlagged.textContent = res.flaggedCount || 0;
-    const avgRisk = res.scannedCount ? Math.round(((res.flaggedCount || 0) / res.scannedCount) * 100) : 0;
-    statsRisk.textContent = `${avgRisk}%`;
+    // Show average risk_score from recent detections (not flagged/scanned ratio which is always ~0%)
+    const detections = res.recentDetections || [];
+    const validDetections = detections.filter(d => d.risk_score >= 0);
+    const avgRisk = validDetections.length > 0
+      ? Math.round(validDetections.reduce((sum, d) => sum + (d.risk_score || 0), 0) / validDetections.length)
+      : 0;
+    
+    // Only show percentage if there is actual risk (avg > 0)
+    statsRisk.textContent = avgRisk > 0 ? `${avgRisk}%` : 'Clear';
   }
 
   function renderDetections(detections) {
@@ -107,8 +114,15 @@ document.addEventListener('DOMContentLoaded', () => {
       const item = document.createElement('div');
       item.className = 'detection-item glass';
       
-      const riskColor = det.risk_score > 70 ? 'var(--red)' : (det.risk_score > 40 ? 'var(--amber)' : 'var(--cyan)');
-      const riskTextClass = det.risk_score > 70 ? 'text-red' : (det.risk_score > 40 ? 'text-amber' : 'text-cyan');
+      const isError = det.risk_score === -1;
+      const isClear = det.risk_score === 0;
+      
+      let displayScore = `${det.risk_score}%`;
+      if (isError) displayScore = 'OFFLINE';
+      if (isClear) displayScore = 'Clear';
+      
+      const riskColor = isError ? 'var(--red)' : (det.risk_score > 70 ? 'var(--red)' : (det.risk_score > 40 ? 'var(--amber)' : 'var(--cyan)'));
+      const riskTextClass = isError ? 'text-red' : (det.risk_score > 70 ? 'text-red' : (det.risk_score > 40 ? 'text-amber' : 'text-cyan'));
 
       item.innerHTML = `
         <div class="detect-header">
@@ -118,9 +132,9 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="snippet">"${det.post_text.substring(0, 50)}${det.post_text.length > 50 ? '...' : ''}"</div>
         <div class="risk-info">
           <div class="risk-bar-container">
-            <div class="risk-bar" style="width: ${det.risk_score}%; background-color: ${riskColor};"></div>
+            <div class="risk-bar" style="width: ${isError ? 100 : det.risk_score}%; background-color: ${riskColor}; opacity: ${isError ? 0.3 : 1}"></div>
           </div>
-          <div class="risk-score ${riskTextClass}">${det.risk_score}%</div>
+          <div class="risk-score ${riskTextClass}" style="${isError ? 'font-size:10px; font-weight:900;' : ''}">${displayScore}</div>
         </div>
       `;
       detectionsList.appendChild(item);

@@ -11,10 +11,24 @@ dotenv.config();
 
 const app = express();
 
+// Allow Chrome extensions and local dev clients
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like curl), Chrome extensions, and localhost
+    if (!origin || origin.startsWith('chrome-extension://') || origin.includes('localhost')) {
+      callback(null, true);
+    } else {
+      callback(null, true); // Allow all during development — restrict in production
+    }
+  },
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
+
 // Middleware
 app.use(express.json());
-app.use(cors());
-app.use(helmet());
+app.use(cors(corsOptions));
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(morgan('dev'));
 
 import analyzeRoutes from './routes/analyzeRoutes.route.js';
@@ -28,7 +42,8 @@ if (process.env.MONGODB_URI) {
   console.log('MongoDB connection skipped: Please set valid MONGODB_URI in .env');
 }
 
-// Rate Limiter
+// Rate Limiter — Disabled for development testing
+/*
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // Limit each IP to 100 requests per `window` (here, per 15 minutes)
@@ -36,9 +51,8 @@ const apiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
-
-// Apply rate limiter to all API routes
 app.use('/api/', apiLimiter);
+*/
 
 // Routes
 app.use('/api/analyze', analyzeRoutes);

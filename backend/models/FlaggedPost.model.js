@@ -21,6 +21,10 @@ const flaggedPostSchema = new mongoose.Schema(
       required: true,
       enum: ['High', 'Medium', 'Low'],
     },
+    category: {
+      type: String,
+      default: 'unknown',
+    },
     explanation: {
       type: String,
       required: true,
