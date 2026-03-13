@@ -79,19 +79,31 @@ export const analyzeBatch = async (req, res, next) => {
       });
     }
 
+    // Helper to clean tweet text for better news matching (remove @mentions, hashtags, and short noise)
+    const cleanSearchQuery = (t = '') => {
+      return t.replace(/(?:https?|ftp):\/\/[\n\S]+/g, '') // remove urls
+              .replace(/@[A-Za-z0-9_]+/g, '')             // remove @mentions
+              .replace(/#[A-Za-z0-9_]+/g, '')             // remove #hashtags
+              .replace(/\s+/g, ' ')                        // collapse whitespace
+              .trim().substring(0, 150);                  // focus on main claim
+    };
+
     // ── STEP 1: Parallel News/Fact-Check Confirmation ────────────────────────
-    console.log(`[ShieldNet Batch] Verifying ${batch.length} posts against trusted sources...`);
-    const sourcePromises = batch.map(p => getSources(p.text));
+    console.log(`[ShieldNet Batch] Verifying ${batch.length} posts against BBC & trusted sources...`);
+    const sourcePromises = batch.map(p => getSources(cleanSearchQuery(p.text)));
     const allSources = await Promise.all(sourcePromises);
 
     const groundTruths = batch.map((p, i) => {
       const { results: tavilyResults, formatted } = allSources[i];
       
-      // Fact-check check
+      // Fact-check check - improved to look for BBC Verify/Reality Check specifically
       const factCheckHit = tavilyResults.find(r => {
         const url = (r.url || '').toLowerCase();
         const content = ((r.title || '') + ' ' + (r.content || '')).toLowerCase();
-        return FACT_CHECK_DOMAINS.some(d => url.includes(d)) && FAKE_SIGNALS.some(s => content.includes(s));
+        const isFactSource = FACT_CHECK_DOMAINS.some(d => url.includes(d)) || 
+                             url.includes('bbc.com/news/verify') || 
+                             url.includes('bbc.com/news/reality_check');
+        return isFactSource && FAKE_SIGNALS.some(s => content.includes(s));
       });
 
       // Trusted News check
